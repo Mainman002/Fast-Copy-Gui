@@ -11,6 +11,8 @@ Fast-Copy-GUI is a cross-platform desktop application (macOS and Linux) that pro
 * Dark and light themes.
 * Persistent configuration for last used folders, theme, and thread count.
 
+<img width="812" height="640" alt="Screenshot 2025-12-02 at 10 55 53 AM" src="https://github.com/user-attachments/assets/79531fd6-017e-4469-a472-9da96f5e10c8" />
+
 ## Installation
 
 ### Prerequisites
