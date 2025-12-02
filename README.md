@@ -53,13 +53,14 @@ python main.py
 
 To build a standalone executable for Linux or macOS, PyInstaller can be used:
 
+# linux
 ```bash
-# Linux
 pyinstaller --noconfirm --windowed --name "FastCopyGUI" \
     --add-data "fast_copy.sh:." main.py
 ```
 
 # macOS
+```bash
 pyinstaller --noconfirm --windowed --name "FastCopyGUI" \
     --add-data "fast_copy.sh:." main.py
 ```
