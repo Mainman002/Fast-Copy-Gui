@@ -55,10 +55,13 @@ To build a standalone executable for Linux or macOS, PyInstaller can be used:
 
 ```bash
 # Linux
-pyinstaller --onefile --windowed main.py
+pyinstaller --noconfirm --windowed --name "FastCopyGUI" \
+    --add-data "fast_copy.sh:." main.py
+```
 
 # macOS
-pyinstaller --onefile --windowed main.py
+pyinstaller --noconfirm --windowed --name "FastCopyGUI" \
+    --add-data "fast_copy.sh:." main.py
 ```
 
 The resulting executable will be located in the `dist` directory.

@@ -30,12 +30,19 @@ class CopyWorker(QThread):
         self._cancel_requested = False
     
     def run(self):
+        if getattr(sys, 'frozen', False):
+            # Running in PyInstaller bundle
+            base_dir = sys._MEIPASS
+        else:
+            base_dir = os.path.dirname(__file__)
+
+        script_path = os.path.join(base_dir, "fast_copy.sh")
+
         self._process = subprocess.Popen(
-            ["./fast_copy_wbfs.sh", self.src, self.dst, "--thread", str(self.threads)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True
+            [script_path, self.src, self.dst, "--thread", str(self.threads)],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
         )
+
         for line in self._process.stdout:
             if self._cancel_requested:
                 self._process.terminate()
