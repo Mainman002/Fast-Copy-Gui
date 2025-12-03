@@ -9,7 +9,7 @@ SITE_PACKAGES=$(python3 -c "import site; print(site.getsitepackages()[0])")
 
 # Common PyInstaller options
 NAME="FastCopyGUI"
-DATA_ARGS="--add-data fast_copy.sh:. --add-data assets:assets"
+DATA_ARGS="--add-data assets:assets"
 
 if [[ "$OS" == "Darwin" ]]; then
     # macOS: folder-based build is faster and more reliable
