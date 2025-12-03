@@ -26,6 +26,11 @@ def get_asset_path(filename):
         base_dir = os.path.join(os.path.dirname(__file__), "assets")
     return os.path.join(base_dir, filename)
 
+# Folder Icon Image
+# Note: 'icons/folder.svg' needs to be included in the assets folder for PyInstaller
+folder_icon_light = get_asset_path("icons/dark_folder.png")
+folder_icon_dark = get_asset_path("icons/light_folder.png")
+
 CONFIG_FILE = os.path.expanduser("~/.fast_copy_gui_config.json")
 
 class CopyWorker(QThread):
@@ -33,7 +38,7 @@ class CopyWorker(QThread):
     log_signal = Signal(str)
     
     # Removed 'threads' argument as it is no longer used by rsync
-    def __init__(self, src, dst, move=False, invert=False):
+    def __init__(self, src, dst, move=False, invert=False, ignore_existing=True):
         super().__init__()
         
         # Handle Invert logic here by swapping src/dst internally
@@ -46,6 +51,7 @@ class CopyWorker(QThread):
 
         self.move = move
         self.invert = invert
+        self.ignore_existing = ignore_existing
         self._process = None
         self._cancel_requested = False
     
@@ -76,6 +82,9 @@ class CopyWorker(QThread):
 
         if self.move:
             rsync_cmd_base.append("--remove-source-files")
+        
+        if self.ignore_existing:
+            rsync_cmd_base.append("--ignore-existing")
 
         # Crucially, append a trailing slash to the source to copy contents, not the parent folder.
         # This is the single rsync command for the entire operation.
@@ -193,10 +202,6 @@ class CopyGUI(QWidget):
         self.invert = False
         self.setFocus(Qt.OtherFocusReason)
 
-        # Folder Icon Image
-        # Note: 'icons/folder.svg' needs to be included in the assets folder for PyInstaller
-        folder_icon = get_asset_path("icons/folder.svg")
-
         main_layout = QVBoxLayout(self)
 
         # === Row 1: Header (Start/Cancel, Theme Toggle) ===
@@ -212,12 +217,16 @@ class CopyGUI(QWidget):
         self.invert_checkbox = QCheckBox("Invert")
         header_layout.addWidget(self.invert_checkbox)
 
-        # Dark Theme Toggle
-        self.theme_checkbox = QCheckBox("Light")
-        header_layout.addWidget(self.theme_checkbox)
+        # Ignore Existing
+        self.ignore_existing_checkbox = QCheckBox("Ignore Existing")
+        header_layout.addWidget(self.ignore_existing_checkbox)
 
         # Separator (Removed the thread-related layout here)
         header_layout.addSpacerItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
+
+        # Dark Theme Toggle
+        self.theme_checkbox = QCheckBox("Theme: Light")
+        header_layout.addWidget(self.theme_checkbox)
         
         main_layout.addLayout(header_layout)
 
@@ -234,7 +243,11 @@ class CopyGUI(QWidget):
 
         # Source btn
         self.src_btn = QPushButton("")
-        self.src_btn.setIcon(QIcon(folder_icon))
+        if self.theme_toggle:
+            self.src_btn.setIcon(QIcon(folder_icon_dark))
+        else:
+            self.src_btn.setIcon(QIcon(folder_icon_light))
+
         self.src_btn.setIconSize(QSize(30, 30))
         self.src_btn.setFixedSize(QSize(30, 30))
 
@@ -268,7 +281,13 @@ class CopyGUI(QWidget):
         self.dst_text_label.setFixedWidth(75)
         
         self.dst_btn = QPushButton("")
-        self.dst_btn.setIcon(QIcon(folder_icon))
+
+        # self.dst_btn.setIcon(QIcon(folder_icon))
+        if self.theme_toggle:
+            self.dst_btn.setIcon(QIcon(folder_icon_dark))
+        else:
+            self.dst_btn.setIcon(QIcon(folder_icon_light))
+
         self.dst_btn.setIconSize(QSize(30, 30))
         self.dst_btn.setFixedSize(QSize(30, 30))
 
@@ -308,6 +327,7 @@ class CopyGUI(QWidget):
         self.theme_checkbox.clicked.connect(self.toggle_theme)
         self.move_checkbox.clicked.connect(self.toggle_move)
         self.invert_checkbox.clicked.connect(self.toggle_invert)
+        self.ignore_existing_checkbox.clicked.connect(self.toggle_ignore_existing)
 
         # Config
         self.src_dir = ""
@@ -326,6 +346,11 @@ class CopyGUI(QWidget):
         self.invert = self.invert_checkbox.isChecked()
         self.save_config()
 
+    # Toggle Ignore Existing
+    def toggle_ignore_existing(self):
+        self.ignore_existing = self.ignore_existing_checkbox.isChecked()
+        self.save_config()
+
     # Theme Apply
     def apply_theme(self):
         if self.theme_toggle:
@@ -340,9 +365,13 @@ class CopyGUI(QWidget):
         self.apply_theme()
 
         if self.theme_toggle:
-            self.theme_checkbox.setText("Dark")
+            self.theme_checkbox.setText("Theme: Dark")
+            self.src_btn.setIcon(QIcon(folder_icon_dark))
+            self.dst_btn.setIcon(QIcon(folder_icon_dark))
         else:
-            self.theme_checkbox.setText("Light")
+            self.theme_checkbox.setText("Theme: Light")
+            self.src_btn.setIcon(QIcon(folder_icon_light))
+            self.dst_btn.setIcon(QIcon(folder_icon_light))
 
     # Update folder labels
     def update_labels(self):
@@ -384,11 +413,11 @@ class CopyGUI(QWidget):
                     
                 self.theme_toggle = theme_toggle
                 if self.theme_toggle:
-                    self.theme_checkbox.setText("Dark")
+                    self.theme_checkbox.setText("Theme: Dark")
                 else:
-                    self.theme_checkbox.setText("Light")
+                    self.theme_checkbox.setText("Theme: Light")
                 
-                theme_toggle = data.get("theme_toggle", False)
+                theme_toggle = data.get("theme_toggle", True)
                 self.theme_checkbox.setChecked(theme_toggle)
 
                 move = data.get("move", False)
@@ -398,6 +427,17 @@ class CopyGUI(QWidget):
                 invert = data.get("invert", False)
                 self.invert_checkbox.setChecked(invert)
                 self.invert = invert
+
+                ignore_existing = data.get("ignore_existing", True)
+                self.ignore_existing_checkbox.setChecked(ignore_existing)
+                self.ignore_existing = ignore_existing
+
+                if self.theme_toggle:
+                    self.src_btn.setIcon(QIcon(folder_icon_dark))
+                    self.dst_btn.setIcon(QIcon(folder_icon_dark))
+                else:
+                    self.src_btn.setIcon(QIcon(folder_icon_light))
+                    self.dst_btn.setIcon(QIcon(folder_icon_light))
             except:
                 pass
 
@@ -407,7 +447,8 @@ class CopyGUI(QWidget):
             "dst": self.dst_dir,
             "theme_toggle": self.theme_toggle,
             "move": self.move_checkbox.isChecked(),
-            "invert": self.invert_checkbox.isChecked()
+            "invert": self.invert_checkbox.isChecked(),
+            "ignore_existing": self.ignore_existing_checkbox.isChecked()
             }
         
         with open(CONFIG_FILE, "w") as f:
@@ -437,7 +478,8 @@ class CopyGUI(QWidget):
             self.src_dir, 
             self.dst_dir, 
             move=self.move_checkbox.isChecked(), 
-            invert=self.invert_checkbox.isChecked()
+            invert=self.invert_checkbox.isChecked(),
+            ignore_existing=self.ignore_existing_checkbox.isChecked()
         )
 
         self.worker.progress_signal.connect(self.progress.setValue)
