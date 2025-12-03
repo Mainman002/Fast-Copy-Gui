@@ -1,33 +1,28 @@
 import sys
 import os
-import signal
 import subprocess
 import json
-import multiprocessing
-import re # Added for rsync progress parsing
+import re 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QPushButton, QProgressBar, QTextEdit,
-    QVBoxLayout, QHBoxLayout, QLabel, QFileDialog, QSpinBox, QSpacerItem, QSizePolicy,
-    QScrollArea, QCheckBox
+    QVBoxLayout, QHBoxLayout, QLabel, QFileDialog, QSpinBox, 
+    QSpacerItem, QSizePolicy, QScrollArea, QCheckBox, QStackedWidget,
+    QGridLayout, QGroupBox
 )
 
 from PySide6.QtGui import (
-    QPalette, QColor, QIcon, QFont # Added QFont for global font manipulation
+    QPalette, QColor, QIcon
 )
 
-from PySide6.QtCore import QThread, Signal, QSize, Qt, QDir
+from PySide6.QtCore import QThread, Signal, QSize, Qt, QDir, QLocale
 
 def get_asset_path(filename):
     if getattr(sys, 'frozen', False):
-        # Running from PyInstaller bundle
         base_dir = os.path.join(sys._MEIPASS, "assets")
     else:
-        # Running from source
         base_dir = os.path.join(os.path.dirname(__file__), "assets")
     return os.path.join(base_dir, filename)
 
-# Folder Icon Image
-# Note: 'icons/folder.svg' needs to be included in the assets folder for PyInstaller
 folder_icon_light = get_asset_path("icons/dark_folder.png")
 folder_icon_dark = get_asset_path("icons/light_folder.png")
 
@@ -37,11 +32,9 @@ class CopyWorker(QThread):
     progress_signal = Signal(int)
     log_signal = Signal(str)
     
-    # Removed 'threads' argument as it is no longer used by rsync
     def __init__(self, src, dst, move=False, invert=False, ignore_existing=True):
         super().__init__()
         
-        # Handle Invert logic here by swapping src/dst internally
         if invert:
             self.src = dst
             self.dst = src
@@ -57,15 +50,10 @@ class CopyWorker(QThread):
     
     def run(self):
         # --- 1. RSYNC COMMAND CONSTRUCTION AND PATH CHECK ---
-        
-        # Define the rsync executable path. 
-        # On macOS, Homebrew versions are often preferred over the default system version.
         rsync_path = "rsync"
-        
-        # Check common Homebrew paths on macOS for Apple Silicon and Intel
         homebrew_paths = [
-            "/opt/homebrew/bin/rsync",  # Apple Silicon default
-            "/usr/local/bin/rsync"     # Intel default
+            "/opt/homebrew/bin/rsync",
+            "/usr/local/bin/rsync"
         ]
         
         for path in homebrew_paths:
@@ -73,11 +61,6 @@ class CopyWorker(QThread):
                 rsync_path = path
                 break
 
-        # -a: archive mode
-        # -h: human-readable numbers
-        # -v: verbose output (keeps file names logging)
-        # --info=progress2: Reports OVERALL job progress (total bytes transferred)
-        
         rsync_cmd_base = [rsync_path, "-ahv", "--info=progress2", "--exclude=.DS_Store"]
 
         if self.move:
@@ -86,8 +69,6 @@ class CopyWorker(QThread):
         if self.ignore_existing:
             rsync_cmd_base.append("--ignore-existing")
 
-        # Crucially, append a trailing slash to the source to copy contents, not the parent folder.
-        # This is the single rsync command for the entire operation.
         cmd = rsync_cmd_base + [
             os.path.join(self.src, ""), 
             self.dst
@@ -114,12 +95,10 @@ class CopyWorker(QThread):
             self.log_signal.emit(f"Error: rsync command not found at path: {rsync_path}. Ensure rsync is installed and accessible.")
             return
 
-        # --- 3. PROGRESS PARSING (Using Regex for Robustness) ---
-        # Look for the progress2 line format: e.g., 1,234,567,890 2,000,000,000 10.00M/s 61% 0:00:20
+        # --- 3. PROGRESS PARSING ---
         
         for raw_line in self._process.stdout:
             if self._cancel_requested:
-                # Signal the process to terminate
                 self._process.terminate() 
                 try:
                     self.log_signal.emit("Copy canceled by user.")
@@ -129,24 +108,17 @@ class CopyWorker(QThread):
 
             line = raw_line.strip()
             
-            # --- PROGRESS LINES (Filter and extract overall progress) ---
-            # Identify the overall progress line by presence of B/s, %, and time remaining (:)
             if 'B/s' in line and '%' in line and ':' in line:
                 try:
-                    # Use regex to find the percentage number (\d+) followed by %
                     match = re.search(r'\s(\d+)%', line)
                     
                     if match:
                         percent = int(match.group(1))
                         self.progress_signal.emit(percent)
                 except:
-                    # Ignore lines that look like progress but fail parsing
                     pass
-                # Crucial: Skip logging the continuous progress line to avoid spam
                 continue 
 
-            # --- EVERYTHING ELSE ---
-            # Log all other output (file names from -v, initial lists, error messages)
             if line:
                 try:
                     self.log_signal.emit(line)
@@ -173,11 +145,11 @@ class CopyWorker(QThread):
     def cancel(self):
         self._cancel_requested = True
         if self._process:
-            # Send a termination signal
             self._process.terminate()
 
 def apply_dark_palette(app):
     palette = QPalette()
+    # Setting up the standard Dark Theme colors
     palette.setColor(QPalette.Window, QColor(30, 30, 30))
     palette.setColor(QPalette.WindowText, QColor(240, 240, 240))
     palette.setColor(QPalette.Base, QColor(20, 20, 20))
@@ -189,6 +161,10 @@ def apply_dark_palette(app):
     palette.setColor(QPalette.ButtonText, QColor(240, 240, 240))
     palette.setColor(QPalette.Highlight, QColor(50, 100, 200))
     palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
+    
+    # Custom color for the settings sidebar background
+    palette.setColor(QPalette.Dark, QColor(25, 25, 25))
+    
     app.setPalette(palette)
 
 class CopyGUI(QWidget):
@@ -201,12 +177,53 @@ class CopyGUI(QWidget):
         self.move = False
         self.invert = False
         self.ignore_existing = True
-        self.log_font_size = 12  # Default font size
+        self.log_font_size = 12
         self.setFocus(Qt.OtherFocusReason)
 
         main_layout = QVBoxLayout(self)
+        
+        # --- Main Stacked Widget: Switches between Copy View and Settings View ---
+        self.main_stack = QStackedWidget()
+        main_layout.addWidget(self.main_stack)
+        
+        # --- Initialize Settings Widgets (must be done early for config loading) ---
+        self.init_setting_widgets()
+        
+        # --- Build Views ---
+        self.main_copy_widget = self.create_main_copy_view()
+        self.settings_widget = self.create_settings_view()
+        
+        self.main_stack.addWidget(self.main_copy_widget)
+        self.main_stack.addWidget(self.settings_widget)
+        
+        # --- Signals and Config ---
+        self.connect_signals()
+        self.src_dir = ""
+        self.dst_dir = ""
+        self.load_config()
+        self.update_labels()
+        self.apply_theme()
+        # Initial application of loaded font size to all elements
+        self.set_log_font_size(self.log_font_size) 
+        
+    def init_setting_widgets(self):
+        # Visuals Widgets
+        self.theme_checkbox = QCheckBox("Dark Theme")
+        self.font_size_label = QLabel("Global Font Size:")
+        self.font_size_spinbox = QSpinBox()
+        self.font_size_spinbox.setRange(8, 24)
+        self.font_size_spinbox.setSuffix(" pt")
 
-        # === Row 1: Header (Start/Cancel, Options, Settings) ===
+        # Copy Options Widgets
+        self.move_checkbox = QCheckBox("Move (Remove source files)")
+        self.invert_checkbox = QCheckBox("Invert (Swap src/dst)")
+        self.ignore_existing_checkbox = QCheckBox("Ignore Existing Files (faster)")
+
+    def create_main_copy_view(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        # === Row 1: Header (Start/Cancel, Settings) ===
         header_layout = QHBoxLayout()
         self.start_cancel_btn = QPushButton("Start Copy")
         header_layout.addWidget(self.start_cancel_btn)
@@ -219,65 +236,46 @@ class CopyGUI(QWidget):
         self.invert_checkbox = QCheckBox("Invert")
         header_layout.addWidget(self.invert_checkbox)
 
-        # Ignore Existing
-        self.ignore_existing_checkbox = QCheckBox("Ignore Existing")
-        header_layout.addWidget(self.ignore_existing_checkbox)
-
         # Separator 
         header_layout.addSpacerItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
         
-        # --- Font Size Widget ---
-        self.font_size_label = QLabel("Font Size:")
-        header_layout.addWidget(self.font_size_label)
+        # Settings Button
+        self.show_settings_btn = QPushButton("Settings")
+        header_layout.addWidget(self.show_settings_btn)
         
-        self.font_size_spinbox = QSpinBox()
-        self.font_size_spinbox.setRange(8, 24)
-        self.font_size_spinbox.setValue(self.log_font_size)
-        header_layout.addWidget(self.font_size_spinbox)
-        
-        # Dark Theme Toggle
-        self.theme_checkbox = QCheckBox("Theme: Light")
-        header_layout.addWidget(self.theme_checkbox)
-        
-        main_layout.addLayout(header_layout)
+        layout.addLayout(header_layout)
 
-        # Parent layout for the source row
+        # === Source Row ===
         src_row_layout = QHBoxLayout()
         src_row_layout.setAlignment(Qt.AlignTop)
 
-        # --- Left side: fixed label + button ---
         left_src_layout = QHBoxLayout()
         left_src_layout.setAlignment(Qt.AlignTop)
         self.src_text_label = QLabel("Source")
         self.src_text_label.setFixedWidth(75)
-        self.src_text_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
-        # Source btn
         self.src_btn = QPushButton("")
         self.src_btn.setIconSize(QSize(30, 30))
         self.src_btn.setFixedSize(QSize(30, 30))
 
-        # Source text label
         left_src_layout.addWidget(self.src_text_label)
         left_src_layout.addWidget(self.src_btn)
         src_row_layout.addLayout(left_src_layout)
 
-        # --- Right side: only the source path label scrolls ---
         self.src_label = QLabel("None")
         self.src_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.src_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         src_scroll_area = QScrollArea()
         src_scroll_area.setWidgetResizable(True)
-        src_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        src_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff) # Use Off for this small label
         src_scroll_area.setFixedHeight(self.src_label.sizeHint().height()+16)
         src_scroll_area.setWidget(self.src_label)
         src_row_layout.addWidget(src_scroll_area)
+        layout.addLayout(src_row_layout)
 
-        main_layout.addLayout(src_row_layout)
 
-
-        # --- Destination row ---
+        # === Destination row ===
         dst_row_layout = QHBoxLayout()
         dst_row_layout.setAlignment(Qt.AlignTop)
 
@@ -287,7 +285,6 @@ class CopyGUI(QWidget):
         self.dst_text_label.setFixedWidth(75)
         
         self.dst_btn = QPushButton("")
-
         self.dst_btn.setIconSize(QSize(30, 30))
         self.dst_btn.setFixedSize(QSize(30, 30))
 
@@ -301,65 +298,172 @@ class CopyGUI(QWidget):
 
         dst_scroll_area = QScrollArea()
         dst_scroll_area.setWidgetResizable(True)
-        dst_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        dst_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         dst_scroll_area.setFixedHeight(self.dst_label.sizeHint().height()+16)
         dst_scroll_area.setWidget(self.dst_label)
 
         dst_row_layout.addWidget(dst_scroll_area)
-        main_layout.addLayout(dst_row_layout)
+        layout.addLayout(dst_row_layout)
 
         # === Log ===
         self.log = QTextEdit()
         self.log.setReadOnly(True)
         self.log.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        main_layout.addWidget(self.log, 1)  # stretch factor = 1
+        layout.addWidget(self.log, 1)
 
         # === Progress bar ===
         self.progress = QProgressBar()
         self.progress.setValue(0)
         self.progress.hide()
-        main_layout.addWidget(self.progress)
+        layout.addWidget(self.progress)
+        
+        return widget
 
-        # Signals
+    def create_settings_view(self):
+        widget = QWidget()
+        main_h_layout = QHBoxLayout(widget)
+        
+        # --- 1. Left Sidebar (Category Navigation) ---
+        sidebar_layout = QVBoxLayout()
+        sidebar_layout.setContentsMargins(0, 0, 10, 0)
+        
+        # Back Button
+        self.back_to_main_btn = QPushButton("← Back to Copy")
+        sidebar_layout.addWidget(self.back_to_main_btn)
+        sidebar_layout.addSpacing(10)
+        
+        # Category Buttons
+        self.category_stack = QStackedWidget()
+        
+        self.visuals_btn = QPushButton("Visuals")
+        self.copy_options_btn = QPushButton("Copy Options")
+        
+        sidebar_layout.addWidget(self.visuals_btn)
+        sidebar_layout.addWidget(self.copy_options_btn)
+        sidebar_layout.addStretch(1) # Push buttons to the top
+        
+        main_h_layout.addLayout(sidebar_layout)
+        
+        # --- 2. Right Content Area (Stacked Widget for Categories) ---
+        
+        # Visuals Category (Index 0)
+        visuals_page = self.create_visuals_category()
+        self.category_stack.addWidget(visuals_page)
+        
+        # Copy Options Category (Index 1)
+        copy_options_page = self.create_copy_options_category()
+        self.category_stack.addWidget(copy_options_page)
+
+        main_h_layout.addWidget(self.category_stack, 1) # Give the content area the stretch factor
+        
+        # Initial state: select the first category
+        self.category_stack.setCurrentIndex(0)
+        self.visuals_btn.setDisabled(True) # Visually indicate selection
+
+        # Sidebar button logic
+        self.visuals_btn.clicked.connect(lambda: self.switch_settings_category(0, self.visuals_btn))
+        self.copy_options_btn.clicked.connect(lambda: self.switch_settings_category(1, self.copy_options_btn))
+        
+        return widget
+
+    def create_visuals_category(self):
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        content_widget = QWidget()
+        scroll_area.setWidget(content_widget)
+        
+        grid_layout = QGridLayout(content_widget)
+        grid_layout.setContentsMargins(10, 10, 10, 10)
+        
+        # Group Box for Aesthetics
+        group_aesthetics = QGroupBox("Aesthetics")
+        aesthetics_layout = QVBoxLayout(group_aesthetics)
+        aesthetics_layout.addWidget(self.theme_checkbox)
+        grid_layout.addWidget(group_aesthetics, 0, 0, 1, 2) # Row 0, Col 0, span 1 row, span 2 columns
+        
+        # Group Box for Typography
+        group_typography = QGroupBox("Typography")
+        typography_layout = QGridLayout(group_typography)
+        
+        typography_layout.addWidget(self.font_size_label, 0, 0)
+        typography_layout.addWidget(self.font_size_spinbox, 0, 1)
+        typography_layout.addWidget(QLabel("Shortcut: Ctrl/Cmd + / -"), 1, 0, 1, 2)
+        
+        grid_layout.addWidget(group_typography, 1, 0, 1, 2)
+        
+        # Spacer to push content to the top
+        grid_layout.addItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding), 2, 0)
+        
+        return scroll_area
+
+    def create_copy_options_category(self):
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        content_widget = QWidget()
+        scroll_area.setWidget(content_widget)
+        
+        grid_layout = QGridLayout(content_widget)
+        grid_layout.setContentsMargins(10, 10, 10, 10)
+        
+        # Group Box for Rsync Flags
+        group_flags = QGroupBox("Rsync Command Flags")
+        flags_layout = QVBoxLayout(group_flags)
+        
+        flags_layout.addWidget(self.ignore_existing_checkbox)
+        # flags_layout.addWidget(self.move_checkbox)
+        # flags_layout.addWidget(self.invert_checkbox)
+        
+        grid_layout.addWidget(group_flags, 0, 0, 1, 2)
+        
+        # Spacer to push content to the top
+        grid_layout.addItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding), 1, 0)
+        
+        return scroll_area
+
+    def switch_settings_category(self, index, clicked_btn):
+        # Disable the clicked button and enable the others
+        for btn in [self.visuals_btn, self.copy_options_btn]:
+            btn.setDisabled(btn == clicked_btn)
+            
+        self.category_stack.setCurrentIndex(index)
+
+    def connect_signals(self):
+        # Main View Signals
         self.src_btn.clicked.connect(self.select_src)
         self.dst_btn.clicked.connect(self.select_dst)
         self.start_cancel_btn.clicked.connect(self.toggle_copy)
+        self.show_settings_btn.clicked.connect(lambda: self.main_stack.setCurrentIndex(1))
+        
+        # Settings View Signals
+        self.back_to_main_btn.clicked.connect(lambda: self.main_stack.setCurrentIndex(0))
+        
+        # Setting Widgets Signals
         self.theme_checkbox.clicked.connect(self.toggle_theme)
         self.move_checkbox.clicked.connect(self.toggle_move)
         self.invert_checkbox.clicked.connect(self.toggle_invert)
         self.ignore_existing_checkbox.clicked.connect(self.toggle_ignore_existing)
-        self.font_size_spinbox.valueChanged.connect(self.set_log_font_size) # New connection
+        self.font_size_spinbox.valueChanged.connect(self.set_log_font_size)
 
-        # Config
-        self.src_dir = ""
-        self.dst_dir = ""
-        self.load_config()
-        self.update_labels()
-        self.apply_theme()
-        # Initial application of loaded font size to all elements
-        self.set_log_font_size(self.log_font_size) 
+    # --- Font and Theme Management ---
 
-    # Method to set font size globally
     def set_log_font_size(self, size):
         self.log_font_size = size
         
-        # 1. Create a new font based on the current system font, but with the new size
+        # Apply font to the entire application widget hierarchy
         new_font = self.font()
         new_font.setPointSize(size)
-        
-        # 2. Apply the new font to the main widget, which propagates to most child widgets 
-        # (Labels, Buttons, Checkboxes, Spinbox)
         self.setFont(new_font)
         
-        # 3. Explicitly handle the QTextEdit (log) as it often needs direct font point size setting
+        # Explicitly handle the QTextEdit (log) font
         self.log.setFontPointSize(size)
 
-        # 4. Ensure the spinbox reflects the set value (for config loading consistency)
-        self.font_size_spinbox.setValue(size) 
+        # Update spinbox value (for consistency)
+        self.font_size_spinbox.blockSignals(True)
+        self.font_size_spinbox.setValue(size)
+        self.font_size_spinbox.blockSignals(False)
         
         self.save_config()
 
-    # Handle keyboard shortcuts for zooming
     def keyPressEvent(self, event):
         # Check for Ctrl (Linux/Win) or Command (Mac) modifier
         if event.modifiers() & Qt.ControlModifier:
@@ -373,8 +477,7 @@ class CopyGUI(QWidget):
                 return
 
             # Ctrl/Cmd + Plus or Ctrl/Cmd + Equals (Zoom In)
-            # Qt.Key_Equal often handles the '+' key for zoom shortcuts
-            elif event.key() == Qt.Key_Equal or event.key() == Qt.Key_Plus:
+            elif event.key() in (Qt.Key_Equal, Qt.Key_Plus):
                 new_size = min(24, current_size + 1)
                 self.set_log_font_size(new_size)
                 event.accept()
@@ -382,51 +485,42 @@ class CopyGUI(QWidget):
 
         super().keyPressEvent(event)
 
-    # Toggle Move
-    def toggle_move(self):
-        self.move = self.move_checkbox.isChecked()
-        self.save_config()
-
-    # Toggle Invert
-    def toggle_invert(self):
-        self.invert = self.invert_checkbox.isChecked()
-        self.save_config()
-
-    # Toggle Ignore Existing
-    def toggle_ignore_existing(self):
-        self.ignore_existing = self.ignore_existing_checkbox.isChecked()
-        self.save_config()
-
-    # Theme Apply
     def apply_theme(self):
         if self.theme_toggle:
             apply_dark_palette(app)
         else:
             app.setPalette(QPalette())
+        
+        # Update icon colors based on theme
+        icon = folder_icon_dark if self.theme_toggle else folder_icon_light
+        self.src_btn.setIcon(QIcon(icon))
+        self.dst_btn.setIcon(QIcon(icon))
 
-    # Theme Toggle
     def toggle_theme(self):
         self.theme_toggle = self.theme_checkbox.isChecked()
         self.save_config()
         self.apply_theme()
 
-        if self.theme_toggle:
-            self.theme_checkbox.setText("Theme: Dark")
-            self.src_btn.setIcon(QIcon(folder_icon_dark))
-            self.dst_btn.setIcon(QIcon(folder_icon_dark))
-        else:
-            self.theme_checkbox.setText("Theme: Light")
-            self.src_btn.setIcon(QIcon(folder_icon_light))
-            self.dst_btn.setIcon(QIcon(folder_icon_light))
+    # --- Copy Option Toggles (Now connected to settings widgets) ---
+    def toggle_move(self):
+        self.move = self.move_checkbox.isChecked()
+        self.save_config()
 
-    # Update folder labels
+    def toggle_invert(self):
+        self.invert = self.invert_checkbox.isChecked()
+        self.save_config()
+
+    def toggle_ignore_existing(self):
+        self.ignore_existing = self.ignore_existing_checkbox.isChecked()
+        self.save_config()
+
+    # --- Directory Management ---
+
     def update_labels(self):
         self.src_label.setText(self.src_dir or "None")
         self.dst_label.setText(self.dst_dir or "None")
 
-    # Source Selection
     def select_src(self):
-        # Start in current source directory if it exists
         start_dir = self.src_dir if os.path.exists(self.src_dir) else str(QDir.homePath())
         dir_ = QFileDialog.getExistingDirectory(self, "Select Source Folder", start_dir)
         if dir_:
@@ -434,9 +528,7 @@ class CopyGUI(QWidget):
             self.save_config()
             self.update_labels()
 
-    # Destination Selection
     def select_dst(self):
-        # Start in current destination directory if it exists
         start_dir = self.dst_dir if os.path.exists(self.dst_dir) else str(QDir.homePath())
         dir_ = QFileDialog.getExistingDirectory(self, "Select Destination Folder", start_dir)
         if dir_:
@@ -444,52 +536,36 @@ class CopyGUI(QWidget):
             self.save_config()
             self.update_labels()
 
-    # Config persistence
+    # --- Config Persistence ---
+
     def load_config(self):
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, "r") as f:
                     data = json.load(f)
-                src, dst, theme_toggle = data.get("src"), data.get("dst"), data.get("theme_toggle")
                 
-                if src and os.path.exists(src):
-                    self.src_dir = src
-                if dst and os.path.exists(dst):
-                    self.dst_dir = dst
+                # Directories
+                self.src_dir = data.get("src", "")
+                self.dst_dir = data.get("dst", "")
                     
-                self.theme_toggle = theme_toggle
-                if self.theme_toggle:
-                    self.theme_checkbox.setText("Theme: Dark")
-                else:
-                    self.theme_checkbox.setText("Theme: Light")
-                
-                theme_toggle = data.get("theme_toggle", True)
-                self.theme_checkbox.setChecked(theme_toggle)
-
-                move = data.get("move", False)
-                self.move_checkbox.setChecked(move)
-                self.move = move
-
-                invert = data.get("invert", False)
-                self.invert_checkbox.setChecked(invert)
-                self.invert = invert
-
-                ignore_existing = data.get("ignore_existing", True)
-                self.ignore_existing_checkbox.setChecked(ignore_existing)
-                self.ignore_existing = ignore_existing
-                
-                # Load font size setting
+                # Visuals
+                self.theme_toggle = data.get("theme_toggle", False)
+                self.theme_checkbox.setChecked(self.theme_toggle)
                 self.log_font_size = data.get("log_font_size", 12)
                 self.font_size_spinbox.setValue(self.log_font_size)
+                
+                # Copy Options
+                self.move = data.get("move", False)
+                self.move_checkbox.setChecked(self.move)
+                
+                self.invert = data.get("invert", False)
+                self.invert_checkbox.setChecked(self.invert)
 
+                self.ignore_existing = data.get("ignore_existing", True)
+                self.ignore_existing_checkbox.setChecked(self.ignore_existing)
 
-                if self.theme_toggle:
-                    self.src_btn.setIcon(QIcon(folder_icon_dark))
-                    self.dst_btn.setIcon(QIcon(folder_icon_dark))
-                else:
-                    self.src_btn.setIcon(QIcon(folder_icon_light))
-                    self.dst_btn.setIcon(QIcon(folder_icon_light))
-            except:
+            except Exception as e:
+                # print(f"Error loading config: {e}") # Suppress console output for simple errors
                 pass
 
     def save_config(self):
@@ -500,13 +576,14 @@ class CopyGUI(QWidget):
             "move": self.move_checkbox.isChecked(),
             "invert": self.invert_checkbox.isChecked(),
             "ignore_existing": self.ignore_existing_checkbox.isChecked(),
-            "log_font_size": self.log_font_size  # Save font size
+            "log_font_size": self.log_font_size
             }
         
         with open(CONFIG_FILE, "w") as f:
             json.dump(data, f)
 
-    # Start/Cancel toggle
+    # --- Copy Logic ---
+
     def toggle_copy(self):
         if not self.copying:
             self.start_copy()
@@ -525,7 +602,7 @@ class CopyGUI(QWidget):
         self.progress.setValue(0)
         self.progress.show()
         
-        # Pass current UI settings to the worker (Removed threads argument)
+        # Ensure copy settings are based on the latest checkbox states (even if settings screen is closed)
         self.worker = CopyWorker(
             self.src_dir, 
             self.dst_dir, 
@@ -555,15 +632,17 @@ class CopyGUI(QWidget):
 
     def closeEvent(self, event):
         if hasattr(self, "worker") and self.worker.isRunning():
-            # Warn the user and ignore the close
             self.log.append("\nCannot close the app while a copy is running.\nPlease cancel the copy first.\n")
-            event.ignore()  # Prevent the window from closing
+            event.ignore()
         else:
-            event.accept()  # Allow closing
+            event.accept()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    # Ensure folder assets exist for folder icons, or remove if you use built-in icons
+    
+    # Removed the problematic line causing the AttributeError.
+    # The QLocale line is also removed as it was not strictly necessary.
+    
     gui = CopyGUI()
     gui.show()
     sys.exit(app.exec())
