@@ -86,34 +86,41 @@ jobs:
               --collect-all PySide6
           fi
 
-      - name: Create Final Artifact Zip
+      - name: Create Linux/macOS Artifact Zip
+        # This step runs ONLY on Linux and macOS, using 'zip' and bash syntax
+        if: runner.os != 'Windows'
+        shell: bash
         run: |
-          # The executable is created in the 'dist' folder.
           ZIP_NAME="FastCopyGUI-${{ steps.vars.outputs.ARCH }}-${{ github.sha }}.zip"
+          echo "ZIP_FILE=$ZIP_NAME" >> $GITHUB_ENV
+          
+          cd dist
           
           if [ "${{ steps.vars.outputs.ARCH }}" = "macos" ]; then
-            # macOS and Linux use 'zip' utility
-            cd dist
+            # macOS: Zip the .app directory
             zip -r "../$ZIP_NAME" FastCopyGUI.app
           elif [ "${{ steps.vars.outputs.ARCH }}" = "linux" ]; then
-            cd dist
+            # Linux: Zip the single executable
             zip "../$ZIP_NAME" FastCopyGUI
-          elif [ "${{ steps.vars.outputs.ARCH }}" = "windows" ]; then
-            # Windows runner uses 7z (pre-installed) for compression
-            # The '7z a' command creates an archive: a - add, -tzip - use zip format
-            echo "Zipping artifact using 7z..."
-            if exist dist\FastCopyGUI.exe (
-                7z a -tzip "$ZIP_NAME" dist\FastCopyGUI.exe
-            ) else (
-                # Handle potential PyInstaller one-dir output if build method was changed
-                7z a -tzip "$ZIP_NAME" dist\FastCopyGUI\*
-            )
           fi
-          echo "ZIP_FILE=$ZIP_NAME" >> $GITHUB_ENV
-        # We must use PowerShell for the Windows (7z) logic to work reliably, 
-        # but the shell must be dynamically set or the command adapted.
-        # Since the Windows logic is now in PowerShell syntax, we set the shell for Windows only.
-        shell: ${{ runner.os == 'Windows' && 'powershell' || 'bash' }}
+          
+      - name: Create Windows Artifact Zip (using 7z)
+        # This step runs ONLY on Windows, using '7z' and PowerShell syntax
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          # The executable is created in the 'dist' folder.
+          $ZIP_NAME="FastCopyGUI-${{ steps.vars.outputs.ARCH }}-${{ github.sha }}.zip"
+          echo "ZIP_FILE=$ZIP_NAME" | Out-File -FilePath $env:GITHUB_ENV -Append
+          
+          Write-Host "Zipping artifact using 7z..."
+          # The '7z a' command creates an archive: a - add, -tzip - use zip format
+          if (Test-Path "dist\FastCopyGUI.exe") {
+              7z a -tzip $ZIP_NAME dist\FastCopyGUI.exe
+          } else {
+              # Handle potential PyInstaller one-dir output if build method was changed
+              7z a -tzip $ZIP_NAME dist\FastCopyGUI\*
+          }
         
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
