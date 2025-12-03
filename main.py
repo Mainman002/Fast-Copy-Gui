@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from PySide6.QtGui import (
-    QPalette, QColor, QIcon
+    QPalette, QColor, QIcon, QFont # Added QFont for global font manipulation
 )
 
 from PySide6.QtCore import QThread, Signal, QSize, Qt, QDir
@@ -200,11 +200,13 @@ class CopyGUI(QWidget):
         self.copying = False
         self.move = False
         self.invert = False
+        self.ignore_existing = True
+        self.log_font_size = 12  # Default font size
         self.setFocus(Qt.OtherFocusReason)
 
         main_layout = QVBoxLayout(self)
 
-        # === Row 1: Header (Start/Cancel, Theme Toggle) ===
+        # === Row 1: Header (Start/Cancel, Options, Settings) ===
         header_layout = QHBoxLayout()
         self.start_cancel_btn = QPushButton("Start Copy")
         header_layout.addWidget(self.start_cancel_btn)
@@ -221,9 +223,18 @@ class CopyGUI(QWidget):
         self.ignore_existing_checkbox = QCheckBox("Ignore Existing")
         header_layout.addWidget(self.ignore_existing_checkbox)
 
-        # Separator (Removed the thread-related layout here)
+        # Separator 
         header_layout.addSpacerItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
-
+        
+        # --- Font Size Widget ---
+        self.font_size_label = QLabel("Font Size:")
+        header_layout.addWidget(self.font_size_label)
+        
+        self.font_size_spinbox = QSpinBox()
+        self.font_size_spinbox.setRange(8, 24)
+        self.font_size_spinbox.setValue(self.log_font_size)
+        header_layout.addWidget(self.font_size_spinbox)
+        
         # Dark Theme Toggle
         self.theme_checkbox = QCheckBox("Theme: Light")
         header_layout.addWidget(self.theme_checkbox)
@@ -243,11 +254,6 @@ class CopyGUI(QWidget):
 
         # Source btn
         self.src_btn = QPushButton("")
-        if self.theme_toggle:
-            self.src_btn.setIcon(QIcon(folder_icon_dark))
-        else:
-            self.src_btn.setIcon(QIcon(folder_icon_light))
-
         self.src_btn.setIconSize(QSize(30, 30))
         self.src_btn.setFixedSize(QSize(30, 30))
 
@@ -281,12 +287,6 @@ class CopyGUI(QWidget):
         self.dst_text_label.setFixedWidth(75)
         
         self.dst_btn = QPushButton("")
-
-        # self.dst_btn.setIcon(QIcon(folder_icon))
-        if self.theme_toggle:
-            self.dst_btn.setIcon(QIcon(folder_icon_dark))
-        else:
-            self.dst_btn.setIcon(QIcon(folder_icon_light))
 
         self.dst_btn.setIconSize(QSize(30, 30))
         self.dst_btn.setFixedSize(QSize(30, 30))
@@ -328,6 +328,7 @@ class CopyGUI(QWidget):
         self.move_checkbox.clicked.connect(self.toggle_move)
         self.invert_checkbox.clicked.connect(self.toggle_invert)
         self.ignore_existing_checkbox.clicked.connect(self.toggle_ignore_existing)
+        self.font_size_spinbox.valueChanged.connect(self.set_log_font_size) # New connection
 
         # Config
         self.src_dir = ""
@@ -335,6 +336,51 @@ class CopyGUI(QWidget):
         self.load_config()
         self.update_labels()
         self.apply_theme()
+        # Initial application of loaded font size to all elements
+        self.set_log_font_size(self.log_font_size) 
+
+    # Method to set font size globally
+    def set_log_font_size(self, size):
+        self.log_font_size = size
+        
+        # 1. Create a new font based on the current system font, but with the new size
+        new_font = self.font()
+        new_font.setPointSize(size)
+        
+        # 2. Apply the new font to the main widget, which propagates to most child widgets 
+        # (Labels, Buttons, Checkboxes, Spinbox)
+        self.setFont(new_font)
+        
+        # 3. Explicitly handle the QTextEdit (log) as it often needs direct font point size setting
+        self.log.setFontPointSize(size)
+
+        # 4. Ensure the spinbox reflects the set value (for config loading consistency)
+        self.font_size_spinbox.setValue(size) 
+        
+        self.save_config()
+
+    # Handle keyboard shortcuts for zooming
+    def keyPressEvent(self, event):
+        # Check for Ctrl (Linux/Win) or Command (Mac) modifier
+        if event.modifiers() & Qt.ControlModifier:
+            current_size = self.log_font_size
+            
+            # Ctrl/Cmd + Minus (Zoom Out)
+            if event.key() == Qt.Key_Minus:
+                new_size = max(8, current_size - 1)
+                self.set_log_font_size(new_size)
+                event.accept()
+                return
+
+            # Ctrl/Cmd + Plus or Ctrl/Cmd + Equals (Zoom In)
+            # Qt.Key_Equal often handles the '+' key for zoom shortcuts
+            elif event.key() == Qt.Key_Equal or event.key() == Qt.Key_Plus:
+                new_size = min(24, current_size + 1)
+                self.set_log_font_size(new_size)
+                event.accept()
+                return
+
+        super().keyPressEvent(event)
 
     # Toggle Move
     def toggle_move(self):
@@ -431,6 +477,11 @@ class CopyGUI(QWidget):
                 ignore_existing = data.get("ignore_existing", True)
                 self.ignore_existing_checkbox.setChecked(ignore_existing)
                 self.ignore_existing = ignore_existing
+                
+                # Load font size setting
+                self.log_font_size = data.get("log_font_size", 12)
+                self.font_size_spinbox.setValue(self.log_font_size)
+
 
                 if self.theme_toggle:
                     self.src_btn.setIcon(QIcon(folder_icon_dark))
@@ -448,7 +499,8 @@ class CopyGUI(QWidget):
             "theme_toggle": self.theme_toggle,
             "move": self.move_checkbox.isChecked(),
             "invert": self.invert_checkbox.isChecked(),
-            "ignore_existing": self.ignore_existing_checkbox.isChecked()
+            "ignore_existing": self.ignore_existing_checkbox.isChecked(),
+            "log_font_size": self.log_font_size  # Save font size
             }
         
         with open(CONFIG_FILE, "w") as f:
