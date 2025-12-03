@@ -2,10 +2,11 @@ name: Build Desktop Executables (PyInstaller)
 
 on:
   push:
-    # Trigger builds when code is pushed to the main branch
+    # Trigger builds when code is pushed to the main branch, master, or the rsync branch
     branches:
       - main
       - master
+      - rsync
     # Also trigger on tag pushes (e.g., v1.0.0) which is ideal for releases
     tags:
       - 'v*' 
@@ -53,11 +54,11 @@ jobs:
 
       - name: Build Executable with PyInstaller
         run: |
-          # Use your main script name (fast_copy_gui.py)
+          # Use your main script name (main.py)
           # --onefile creates a single executable file
           # --windowed is important for GUI apps on macOS/Windows to prevent console window
           # -n sets the base name of the executable
-          pyinstaller --onefile --windowed --name FastCopyGUI fast_copy_gui.py
+          pyinstaller --onefile --windowed --name FastCopyGUI main.py
 
       - name: Create Final Artifact Zip
         run: |
