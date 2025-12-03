@@ -64,7 +64,7 @@ pip install PySide6
 ## Running from Source
 
 ```bash
-git clone https://github.com/Mainman002/Fast-Copy-Gui.git
+git clone -b rsync https://github.com/Mainman002/Fast-Copy-Gui.git
 cd Fast-Copy-GUI
 python main.py
 ```
