@@ -31,12 +31,13 @@ class CopyWorker(QThread):
     progress_signal = Signal(int)
     log_signal = Signal(str)
     
-    def __init__(self, src, dst, threads=1, move=False):
+    def __init__(self, src, dst, threads=1, move=False, invert=False):
         super().__init__()
         self.src = src
         self.dst = dst
         self.threads = threads
         self.move = move
+        self.invert = invert
         self._process = None
         self._cancel_requested = False
     
@@ -51,6 +52,9 @@ class CopyWorker(QThread):
 
         if self.move:
             cmd.append("--move")
+            
+        if self.invert:
+            cmd.append("--invert")
 
 
         self._process = subprocess.Popen(
@@ -61,7 +65,7 @@ class CopyWorker(QThread):
             preexec_fn=os.setsid
         )
 
-        for line in self._process.stdout:
+        for raw_line in self._process.stdout:
             if self._cancel_requested:
                 self._process.terminate()
                 try:
@@ -70,25 +74,31 @@ class CopyWorker(QThread):
                     pass
                 return
 
-            try:
-                self.log_signal.emit(line.strip())
-            except RuntimeError:
-                pass  # GUI closed
+            line = raw_line.strip()
 
-            if line.startswith("(") and "/" in line:
+            # --- PROGRESS LINES ---
+            if line.startswith("PROGRESS"):
                 try:
-                    current, total = line[1:].split(")")[0].split("/")
-                    progress = int(current) / int(total) * 100
-                    try:
-                        self.progress_signal.emit(int(progress))
-                    except RuntimeError:
-                        pass  # GUI closed
+                    _, cur, tot = line.split()
+                    current = int(cur)
+                    total = int(tot)
+
+                    if total > 0:
+                        percent = int((current / total) * 100)
+                        self.progress_signal.emit(percent)
                 except:
                     pass
+                continue  # DO NOT LOG IT
+
+            # --- EVERYTHING ELSE ---
+            try:
+                self.log_signal.emit(line)
+            except RuntimeError:
+                pass
 
         self._process.wait()
         try:
-            self.log_signal.emit("Copy complete!" if not self._cancel_requested else "Canceled.")
+            self.log_signal.emit("\nCopy complete!" if not self._cancel_requested else "Canceled.")
         except RuntimeError:
             pass
     
@@ -126,6 +136,8 @@ class CopyGUI(QWidget):
         self.resize(700, 500)
         self.dark_mode = False
         self.copying = False
+        self.move = False
+        self.invert = False
         self.setFocus(Qt.OtherFocusReason)
 
         # Folder Icon Image
@@ -138,10 +150,15 @@ class CopyGUI(QWidget):
         self.start_cancel_btn = QPushButton("Start Copy")
         header_layout.addWidget(self.start_cancel_btn)
 
+        # Move
         self.move_checkbox = QCheckBox("Move")
         header_layout.addWidget(self.move_checkbox)
 
-        # self.theme_btn = QPushButton("Light")
+        # Invert
+        self.invert_checkbox = QCheckBox("Invert")
+        header_layout.addWidget(self.invert_checkbox)
+
+        # Dark Theme Toggle
         self.theme_btn = QCheckBox("Light")
         header_layout.addWidget(self.theme_btn)
 
@@ -233,18 +250,17 @@ class CopyGUI(QWidget):
         dst_row_layout.addWidget(dst_scroll_area)
         main_layout.addLayout(dst_row_layout)
 
-        # === Progress bar ===
-        self.progress = QProgressBar()
-        self.progress.setValue(0)
-        self.progress.hide()
-        main_layout.addWidget(self.progress)
-
         # === Log ===
         self.log = QTextEdit()
         self.log.setReadOnly(True)
         self.log.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         main_layout.addWidget(self.log, 1)  # stretch factor = 1
 
+        # === Progress bar ===
+        self.progress = QProgressBar()
+        self.progress.setValue(0)
+        self.progress.hide()
+        main_layout.addWidget(self.progress)
 
         # Signals
         self.src_btn.clicked.connect(self.select_src)
@@ -252,8 +268,8 @@ class CopyGUI(QWidget):
         self.start_cancel_btn.clicked.connect(self.toggle_copy)
         self.theme_btn.clicked.connect(self.toggle_theme)
         self.move_checkbox.clicked.connect(self.toggle_move)
+        self.invert_checkbox.clicked.connect(self.toggle_invert)
         self.thread_spin.valueChanged.connect(self.thread_changed)
-
 
         # Config
         self.src_dir = ""
@@ -262,11 +278,19 @@ class CopyGUI(QWidget):
         self.update_labels()
         self.apply_theme()
 
+    # Toggle Move
     def toggle_move(self):
-        self.move = not self.move
+        self.move = self.move_checkbox.isChecked()
+
         self.save_config()
 
-    # Theme
+    # Toggle Invert
+    def toggle_invert(self):
+        self.invert = self.invert_checkbox.isChecked()
+
+        self.save_config()
+
+    # Theme Apply
     def apply_theme(self):
         if self.dark_mode:
             apply_dark_palette(app)
@@ -274,13 +298,15 @@ class CopyGUI(QWidget):
             app.setPalette(QPalette())
 
 
+    # Thread Changed
     def thread_changed(self):
         self.save_config()
         self.setFocus(Qt.OtherFocusReason)
 
-
+    # Theme Toggle
     def toggle_theme(self):
-        self.dark_mode = not self.dark_mode
+        self.dark_mode = self.theme_btn.isChecked()
+
         self.save_config()
         self.apply_theme()
 
@@ -289,13 +315,12 @@ class CopyGUI(QWidget):
         else:
             self.theme_btn.setText("Light")
 
-
     # Update folder labels
     def update_labels(self):
         self.src_label.setText(self.src_dir or "None")
         self.dst_label.setText(self.dst_dir or "None")
 
-    # File selection
+    # Source Selection
     def select_src(self):
         # Start in current source directory if it exists
         start_dir = self.src_dir if os.path.exists(self.src_dir) else str(QDir.homePath())
@@ -305,6 +330,7 @@ class CopyGUI(QWidget):
             self.save_config()
             self.update_labels()
 
+    # Destination Selection
     def select_dst(self):
         # Start in current destination directory if it exists
         start_dir = self.dst_dir if os.path.exists(self.dst_dir) else str(QDir.homePath())
@@ -320,7 +346,7 @@ class CopyGUI(QWidget):
             try:
                 with open(CONFIG_FILE, "r") as f:
                     data = json.load(f)
-                src, dst, theme_toggle, threads, move = data.get("src"), data.get("dst"), data.get("theme_toggle"), data.get("threads"), data.get("move")
+                src, dst, theme_toggle, threads, move, invert = data.get("src"), data.get("dst"), data.get("theme_toggle"), data.get("threads"), data.get("move"), data.get("invert")
                 if src and os.path.exists(src):
                     self.src_dir = src
                 if dst and os.path.exists(dst):
@@ -335,6 +361,9 @@ class CopyGUI(QWidget):
                 move = data.get("move", False)
                 self.move_checkbox.setChecked(move)
 
+                invert = data.get("invert", False)
+                self.invert_checkbox.setChecked(invert)
+
                 # if threads and os.path.exists(threads):
                 threads = data.get("threads")
                 if isinstance(threads, int) and 1 <= threads <= multiprocessing.cpu_count():
@@ -348,7 +377,8 @@ class CopyGUI(QWidget):
             "dst": self.dst_dir,
             "theme_toggle": self.dark_mode,
             "threads": self.thread_spin.value(),
-            "move": self.move_checkbox.isChecked()
+            "move": self.move_checkbox.isChecked(),
+            "invert": self.invert_checkbox.isChecked()
             }
         
         with open(CONFIG_FILE, "w") as f:
@@ -365,7 +395,7 @@ class CopyGUI(QWidget):
         self.log.clear()
 
         if hasattr(self, "worker") and self.worker.isRunning():
-            self.log.append("Copy already running.")
+            self.log.append("\nCopy already running.")
             return
 
         threads = self.thread_spin.value()
@@ -373,15 +403,18 @@ class CopyGUI(QWidget):
         self.start_cancel_btn.setText("Cancel Copy")
         self.progress.setValue(0)
         self.progress.show()
-        self.worker = CopyWorker(self.src_dir, self.dst_dir, threads=threads, move=self.move_checkbox.isChecked())
+        self.worker = CopyWorker(self.src_dir, self.dst_dir, threads=threads, move=self.move_checkbox.isChecked(), invert=self.invert_checkbox.isChecked())
         move=self.move_checkbox.isChecked()
         self.worker.progress_signal.connect(self.progress.setValue)
-        self.worker.log_signal.connect(lambda text: self.log.append(text))
+
+        # if line.startswith("PROGRESS"):
+        self.worker.log_signal.connect(lambda text: self.log.append('%s' % text))
+        # self.worker.log_signal.connect(lambda text: self.log.append('%s\n' % text))
         self.worker.finished.connect(self.on_finished)
         self.worker.start()
 
     def cancel_copy(self):
-        self.log.append("Cancelling Copy...\nClosing active threads now\nDon't close the app until finished")
+        self.log.append("\nCancelling Copy...\nClosing active threads now\nDon't close the app until finished\n")
         if hasattr(self, "worker"):
             self.worker.cancel()
             self.copying = False
@@ -397,7 +430,7 @@ class CopyGUI(QWidget):
     def closeEvent(self, event):
         if hasattr(self, "worker") and self.worker.isRunning():
             # Warn the user and ignore the close
-            self.log.append("Cannot close the app while a copy is running.\nPlease cancel the copy first.")
+            self.log.append("\nCannot close the app while a copy is running.\nPlease cancel the copy first.\n")
             event.ignore()  # Prevent the window from closing
         else:
             event.accept()  # Allow closing

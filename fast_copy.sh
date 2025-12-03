@@ -7,8 +7,16 @@
 SRC_DIR="$1"
 DEST_DIR="$2"
 
+if [ "${#INVERT_MODE}" -eq 1 ]; then
+    # Swap source and destination
+    SRC_DIR="$2"
+    DEST_DIR="$1"
+fi
+
+
 THREADS=1
 MOVE_MODE=0
+INVERT_MODE=0
 
 # Parse flags
 shift 2
@@ -22,14 +30,26 @@ while [[ $# -gt 0 ]]; do
             MOVE_MODE=1
             shift
             ;;
+        --invert)
+            INVERT_MODE=1
+            shift
+            ;;
         *)
             shift
             ;;
     esac
 done
 
+# After parsing flags
+if [ "$INVERT_MODE" -eq 1 ]; then
+    # Swap source and destination
+    TMP="$SRC_DIR"
+    SRC_DIR="$DEST_DIR"
+    DEST_DIR="$TMP"
+fi
+
 if [ -z "$SRC_DIR" ] || [ -z "$DEST_DIR" ]; then
-    echo "Usage: fast_copy.sh /source /dest [--thread N] [--move]"
+    echo "Usage: fast_copy.sh /source /dest [--thread N] [--move] [--invert]"
     exit 1
 fi
 
@@ -49,16 +69,17 @@ fi
 # =========================================
 FILE_LIST=$(mktemp "${TMPDIR:-/tmp}"/fastcopy_files.XXXXXX)
 COUNTER_FILE=$(mktemp "${TMPDIR:-/tmp}"/fastcopy_count.XXXXXX)
-echo 0 > "$COUNTER_FILE"
+# echo 0 > "$COUNTER_FILE"
 
 cleanup() {
     rm -f "$FILE_LIST" "$COUNTER_FILE"
-    echo "Copy canceled!"
+    echo "\nCopy canceled!"
     exit 1
 }
 trap cleanup SIGINT SIGTERM
 
-echo "Starting copy from '$SRC_DIR' → '$DEST_DIR' (threads: $THREADS, move=$MOVE_MODE)"
+echo "Starting copy from '$SRC_DIR' → '$DEST_DIR' (threads: $THREADS, move=$MOVE_MODE), invert=$INVERT_MODE)"
+echo " "
 
 # =========================================
 # Build file list (null-delimited)
@@ -82,7 +103,8 @@ done
 # Count files
 # =========================================
 TOTAL_FILES=$(tr -cd '\0' < "$FILE_LIST" | wc -c)
-PAD_WIDTH=3
+PAD_WIDTH=${#TOTAL_FILES}
+# PAD_WIDTH=3
 
 # PADDING_TOTAL_FILES=$(awk -v RS='\0' 'END {print NR}' "$FILE_LIST")
 # PAD_WIDTH=$(( ${#PADDING_TOTAL_FILES} + 1 ))
@@ -127,6 +149,7 @@ copy_file() {
         # ===========================
         # Atomic across different volumes
         mv "$FILE" "$DEST_TMP"
+        sync "$DEST_TMP"
         mv -f "$DEST_TMP" "$DEST_FILE"
     else
         # ===========================
@@ -134,12 +157,25 @@ copy_file() {
         # ===========================
         if [ ! -f "$DEST_FILE" ] || [ $($STAT_SIZE "$FILE") -ne $($STAT_SIZE "$DEST_FILE") ]; then
             cp -v "$FILE" "$DEST_TMP"
+            sync "$DEST_TMP"
             mv -f "$DEST_TMP" "$DEST_FILE"
         fi
     fi
 
     CURRENT=$(increment_counter "$COUNTER_FILE")
-    printf "(%0${PAD_WIDTH}d/%0${PAD_WIDTH}d) Copying: '%s'\n" "$CURRENT" "$TOTAL_FILES" "$REL_PATH"
+    PAD_WIDTH=3
+
+    # GUI-compatible output
+    # printf "%0${PAD_WIDTH}d / %0${PAD_WIDTH}d - Copying: '%s'\n" \
+    #    "$CURRENT" "$TOTAL_FILES" "$REL_PATH"
+
+    echo "PROGRESS $CURRENT $TOTAL_FILES"
+    printf "%0${PAD_WIDTH}d / %0${PAD_WIDTH}d - Copying: '%s'\n" \
+        "$CURRENT" "$TOTAL_FILES" "$REL_PATH"
+
+
+    # CURRENT=$(increment_counter "$COUNTER_FILE")
+    # printf "%0${PAD_WIDTH}d / %0${PAD_WIDTH}d - Copying: '%s'\n" "$CURRENT" "$TOTAL_FILES" "$REL_PATH"
 
 
 }
@@ -159,4 +195,4 @@ else
 fi
 
 rm -f "$FILE_LIST" "$COUNTER_FILE"
-echo "Copy complete!"
+# echo "Copy complete!"
