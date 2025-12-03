@@ -2,10 +2,11 @@ name: Build Desktop Executables (PyInstaller)
 
 on:
   push:
-    # Trigger builds when code is pushed to the main branch
+    # Trigger builds when code is pushed to the main branch, master, or the rsync branch
     branches:
       - main
       - master
+      - rsync
     # Also trigger on tag pushes (e.g., v1.0.0) which is ideal for releases
     tags:
       - 'v*' 
