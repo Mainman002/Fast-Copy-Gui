@@ -53,17 +53,25 @@ jobs:
           fi
 
       - name: Build Executable with PyInstaller
+        shell: bash
         run: |
-          # Use your main script name (main.py)
-          # --onefile creates a single executable file for maximum portability (Linux)
-          # --windowed prevents the console window from appearing (macOS/Windows)
-          # --add-data 'assets:assets' bundles your necessary assets folder
-          # --collect-all PySide6 ensures all necessary Qt plugins are included
-          pyinstaller --onefile --windowed \
+          # Base command includes common flags (windowed, name, assets, and PySide6 collection)
+          BASE_CMD="pyinstaller --windowed \
             --name FastCopyGUI \
             --add-data 'assets:assets' \
             --collect-all PySide6 \
-            main.py
+            main.py"
+
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            # macOS: Use --onedir (PyInstaller's default when --onefile is missing)
+            # This is essential for PySide6/Qt to correctly bundle symbolic links in the .app folder.
+            echo "Building macOS .app bundle (using --onedir)..."
+            ${BASE_CMD}
+          else
+            # Linux: Use --onefile for a single, portable binary.
+            echo "Building Linux executable (using --onefile)..."
+            ${BASE_CMD} --onefile
+          fi
 
       - name: Create Final Artifact Zip
         run: |
