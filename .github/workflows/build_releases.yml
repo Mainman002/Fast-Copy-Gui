@@ -55,8 +55,20 @@ jobs:
       - name: Build Executable with PyInstaller
         shell: bash
         run: |
-          # FIXED: Defined common arguments without internal quotes to prevent shell expansion errors.
-          COMMON_ARGS="--windowed --name FastCopyGUI --add-data assets:assets --collect-all PySide6 main.py"
+          # UPDATED: Added --exclude-module flags for problematic PySide6 dependencies (Qt3D, QtWebEngine) 
+          # which often cause FileExistsError on macOS during COLLECT phase.
+          COMMON_ARGS="--windowed --name FastCopyGUI \
+            --add-data assets:assets \
+            --collect-all PySide6 \
+            --exclude-module PySide6.Qt3DAnimation \
+            --exclude-module PySide6.Qt3DCore \
+            --exclude-module PySide6.Qt3DExtras \
+            --exclude-module PySide6.Qt3DInput \
+            --exclude-module PySide6.Qt3DLogic \
+            --exclude-module PySide6.Qt3DRender \
+            --exclude-module PySide6.QtWebEngineCore \
+            --exclude-module PySide6.QtWebEngineWidgets \
+            main.py"
 
           if [ "${{ matrix.os }}" = "macos-latest" ]; then
             # macOS: Use --onedir (PyInstaller's default when --onefile is missing)
