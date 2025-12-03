@@ -17,6 +17,7 @@ from PySide6.QtGui import (
 from PySide6.QtCore import QThread, Signal, QSize, Qt, QDir, QLocale
 
 def get_asset_path(filename):
+    # Determine the correct path for assets, supporting both bundled (PyInstaller) and non-bundled execution.
     if getattr(sys, 'frozen', False):
         base_dir = os.path.join(sys._MEIPASS, "assets")
     else:
@@ -42,6 +43,7 @@ class CopyWorker(QThread):
     def __init__(self, src, dst, move=False, invert=False, ignore_existing=True, compress=False, delete=False):
         super().__init__()
         
+        # Determine effective source and destination after checking for invert flag
         if invert:
             self.src = dst
             self.dst = src
@@ -53,65 +55,112 @@ class CopyWorker(QThread):
         self.invert = invert
         self.ignore_existing = ignore_existing
         self.compress = compress
-        self.delete = delete # New flag for mirroring/deletion
+        self.delete = delete
         self._process = None
         self._cancel_requested = False
     
     def run(self):
-        # --- 1. RSYNC COMMAND CONSTRUCTION AND PATH CHECK ---
-        rsync_path = "rsync"
-        homebrew_paths = [
-            "/opt/homebrew/bin/rsync",
-            "/usr/local/bin/rsync"
-        ]
+        # --- 1. COMMAND CONSTRUCTION (Cross-Platform) ---
         
-        for path in homebrew_paths:
-            if os.path.exists(path):
-                rsync_path = path
-                break
-
-        # Base command with archive, human-readable, verbose, progress reporting, and exclusion
-        rsync_cmd_base = [rsync_path, "-ahv", "--info=progress2", "--exclude=.DS_Store"]
-
-        if self.move:
-            rsync_cmd_base.append("--remove-source-files")
-        
-        if self.ignore_existing:
-            rsync_cmd_base.append("--ignore-existing")
+        # Windows: Use Robocopy
+        if sys.platform.startswith('win'):
+            # robocopy source destination [file [file]...] [options]
+            # Robocopy is natively available on Windows
+            cmd_base = ["robocopy", self.src, self.dst]
             
-        if self.compress: # New: Compression for transfers
-            rsync_cmd_base.append("-z")
+            # /E: Copy subdirectories, including empty ones (similar to rsync's archive mode)
+            cmd_base.append("/E") 
+            
+            # /NFL /NDL /NJH /NJS: Suppress logging of file lists and job headers for cleaner output
+            cmd_base.extend(["/NFL", "/NDL", "/NJH", "/NJS"])
+            
+            # /XJ: Exclude Junction points (important for system stability)
+            cmd_base.append("/XJ")
+            
+            # Move flag: /MOV (moves files and deletes from source after copy)
+            if self.move:
+                cmd_base.append("/MOV") 
+            
+            # Ignore Existing: /XO (Excludes Older files - similar to ignoring existing)
+            if self.ignore_existing:
+                cmd_base.append("/XO") 
+            
+            # Compression (-z) is not directly supported by robocopy
+            if self.compress:
+                 self.log_signal.emit("Warning: Compression (-z) is not available with robocopy on Windows.")
+            
+            # Delete/Mirror: /MIR (Mirrors a directory tree - deletes extraneous files from destination)
+            if self.delete:
+                cmd_base.append("/MIR")
+                self.log_signal.emit("Warning: Using /MIR flag will delete files in the destination that do not exist in the source.")
+            elif not self.delete:
+                # If not mirroring, use /S to copy subdirectories but not empty ones, to avoid purging.
+                cmd_base.append("/S")
+            
+            cmd = cmd_base
+            copy_tool = "robocopy"
 
-        if self.delete: # New: Mirroring/Deletion from destination
-            # The --delete option ensures that files existing in the destination 
-            # but not in the source are removed from the destination.
-            rsync_cmd_base.append("--delete") 
+        # Unix-like (macOS/Linux): Use Rsync
+        else:
+            rsync_path = "rsync"
+            
+            # macOS specific path checks (keep this for macOS environment stability)
+            if sys.platform == 'darwin':
+                homebrew_paths = [
+                    "/opt/homebrew/bin/rsync",
+                    "/usr/local/bin/rsync"
+                ]
+                for path in homebrew_paths:
+                    if os.path.exists(path):
+                        rsync_path = path
+                        break
 
-        # IMPORTANT: The trailing slash on self.src tells rsync to copy the *contents* of the source folder.
-        cmd = rsync_cmd_base + [
-            os.path.join(self.src, ""), 
-            self.dst
-        ]
-        
-        try:
+            # Base command with archive, human-readable, verbose, progress reporting, and exclusion
+            rsync_cmd_base = [rsync_path, "-ahv", "--info=progress2", "--exclude=.DS_Store"]
+
+            if self.move:
+                rsync_cmd_base.append("--remove-source-files")
+            
+            if self.ignore_existing:
+                rsync_cmd_base.append("--ignore-existing")
+                
+            if self.compress: 
+                rsync_cmd_base.append("-z")
+
+            if self.delete:
+                rsync_cmd_base.append("--delete") 
+
+            # The trailing slash on self.src tells rsync to copy the *contents* of the source folder.
+            cmd = rsync_cmd_base + [
+                os.path.join(self.src, ""), 
+                self.dst
+            ]
+            copy_tool = "rsync"
             if rsync_path != "rsync":
                 self.log_signal.emit(f"Using rsync path: {rsync_path}")
                 
-            self.log_signal.emit(f"Starting rsync from '{self.src}' → '{self.dst}'")
+        # --- 2. EXECUTION ---
+        try:
+            self.log_signal.emit(f"Starting copy from '{self.src}' → '{self.dst}' using {copy_tool}")
             self.log_signal.emit(f"Command: {' '.join(cmd)}\n")
         except RuntimeError:
-            pass
-            
-        # --- 2. EXECUTION ---
+            pass # Ignore if signal fails during cleanup
+
         try:
             self._process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                text=True
+                text=True,
+                # For Windows, shell=True can sometimes help with finding robocopy, but usually not needed.
+                shell=False 
             )
         except FileNotFoundError:
-            self.log_signal.emit(f"Error: rsync command not found at path: {rsync_path}. Ensure rsync is installed and accessible.")
+            if sys.platform.startswith('win'):
+                error_msg = "Error: robocopy command not found. This should be available on Windows 10/11."
+            else:
+                error_msg = f"Error: rsync command not found. Ensure rsync is installed and accessible."
+            self.log_signal.emit(error_msg)
             return
 
         # --- 3. PROGRESS PARSING ---
@@ -127,6 +176,17 @@ class CopyWorker(QThread):
 
             line = raw_line.strip()
             
+            if sys.platform.startswith('win'):
+                # Robocopy progress is file-by-file and hard to parse for overall % completion.
+                # We will only log the output line by line.
+                if line and not line.startswith("----------") and not line.startswith("Total"):
+                    try:
+                        self.log_signal.emit(line)
+                    except RuntimeError:
+                        pass
+                continue
+
+            # Rsync progress parsing (macOS/Linux)
             # The progress line usually contains 'B/s', '%' and ':'
             if 'B/s' in line and '%' in line and ':' in line:
                 try:
@@ -150,12 +210,25 @@ class CopyWorker(QThread):
         # --- 4. COMPLETION / ERROR CHECK ---
         return_code = self._process.returncode
         
-        if return_code == 0:
+        is_success = False
+        if sys.platform.startswith('win'):
+             # Robocopy returns 0-7 for success (0=no changes, 1=copied, 2=extra files, etc.)
+             if 0 <= return_code <= 7:
+                 is_success = True
+        else:
+            # Rsync only returns 0 for success
+            if return_code == 0:
+                is_success = True
+                
+        if is_success:
             message = "\nCopy complete!"
         elif self._cancel_requested:
             message = "\nCanceled."
         else:
             message = f"\nCopy failed with exit code {return_code}. Check log for details."
+            if sys.platform.startswith('win'):
+                message += " (Robocopy error codes 8+ indicate failure)."
+
 
         try:
             self.log_signal.emit(message)
@@ -198,8 +271,8 @@ class CopyGUI(QWidget):
         self.move = False
         self.invert = False
         self.ignore_existing = True
-        self.compress = False # New property
-        self.delete = False # New property
+        self.compress = False
+        self.delete = False
 
         self.log_font_size = 12
         self.setFocus(Qt.OtherFocusReason)
@@ -243,9 +316,9 @@ class CopyGUI(QWidget):
         self.invert_checkbox = QCheckBox("Invert (Swap src/dst)")
         self.ignore_existing_checkbox = QCheckBox("Ignore Existing Files (faster)")
         
-        # NEW RSYNC OPTIONS
-        self.compress_checkbox = QCheckBox("Compress data during transfer (-z)")
-        self.delete_checkbox = QCheckBox("Delete extraneous files from destination (--delete)")
+        # RSYNC OPTIONS
+        self.compress_checkbox = QCheckBox("Compress data during transfer (-z, Rsync only)")
+        self.delete_checkbox = QCheckBox("Delete extraneous files from destination (--delete / Robocopy /MIR)")
 
     def create_main_copy_view(self):
         widget = QWidget()
@@ -448,18 +521,18 @@ class CopyGUI(QWidget):
         grid_layout.addWidget(group_operations, 0, 0, 1, 2)
         
         # Group Box for Rsync Optimization & Network
-        group_flags = QGroupBox("Rsync Optimization & Network Flags")
+        group_flags = QGroupBox("Optimization & Network Flags")
         flags_layout = QVBoxLayout(group_flags)
         
         flags_layout.addWidget(self.ignore_existing_checkbox)
-        flags_layout.addWidget(self.compress_checkbox) # NEW OPTION
+        flags_layout.addWidget(self.compress_checkbox) 
         
         grid_layout.addWidget(group_flags, 1, 0, 1, 2)
         
         # Group Box for Sync/Mirroring (DANGER)
         group_sync = QGroupBox("Mirroring/Deletion (USE WITH CAUTION)")
         sync_layout = QVBoxLayout(group_sync)
-        sync_layout.addWidget(self.delete_checkbox) # NEW OPTION
+        sync_layout.addWidget(self.delete_checkbox) 
         
         grid_layout.addWidget(group_sync, 2, 0, 1, 2)
         
@@ -497,8 +570,8 @@ class CopyGUI(QWidget):
         self.invert_checkbox.clicked.connect(self.toggle_invert)
         
         self.ignore_existing_checkbox.clicked.connect(self.toggle_ignore_existing)
-        self.compress_checkbox.clicked.connect(self.toggle_compress) # NEW SIGNAL
-        self.delete_checkbox.clicked.connect(self.toggle_delete)     # NEW SIGNAL
+        self.compress_checkbox.clicked.connect(self.toggle_compress)
+        self.delete_checkbox.clicked.connect(self.toggle_delete)     
         
         self.font_size_spinbox.valueChanged.connect(self.set_log_font_size)
 
@@ -574,11 +647,11 @@ class CopyGUI(QWidget):
         self.ignore_existing = self.ignore_existing_checkbox.isChecked()
         self.save_config()
         
-    def toggle_compress(self): # NEW TOGGLE
+    def toggle_compress(self): 
         self.compress = self.compress_checkbox.isChecked()
         self.save_config()
         
-    def toggle_delete(self): # NEW TOGGLE
+    def toggle_delete(self): 
         self.delete = self.delete_checkbox.isChecked()
         self.save_config()
 
@@ -637,14 +710,14 @@ class CopyGUI(QWidget):
                 self.ignore_existing = data.get("ignore_existing", True)
                 self.ignore_existing_checkbox.setChecked(self.ignore_existing)
                 
-                self.compress = data.get("compress", False) # NEW CONFIG LOAD
+                self.compress = data.get("compress", False) 
                 self.compress_checkbox.setChecked(self.compress)
                 
-                self.delete = data.get("delete", False) # NEW CONFIG LOAD
+                self.delete = data.get("delete", False)
                 self.delete_checkbox.setChecked(self.delete)
 
             except Exception as e:
-                # print(f"Error loading config: {e}") # Suppress console output for simple errors
+                # print(f"Error loading config: {e}")
                 pass
 
     def save_config(self):
@@ -655,8 +728,8 @@ class CopyGUI(QWidget):
             "move": self.move_checkbox.isChecked(),
             "invert": self.invert_checkbox.isChecked(),
             "ignore_existing": self.ignore_existing_checkbox.isChecked(),
-            "compress": self.compress_checkbox.isChecked(), # NEW CONFIG SAVE
-            "delete": self.delete_checkbox.isChecked(),     # NEW CONFIG SAVE
+            "compress": self.compress_checkbox.isChecked(), 
+            "delete": self.delete_checkbox.isChecked(),     
             "log_font_size": self.log_font_size
             }
         
@@ -688,8 +761,15 @@ class CopyGUI(QWidget):
         self.copying = True
         self.start_cancel_btn.setText("Cancel Copy")
         self.progress.setValue(0)
-        self.progress.show()
         
+        # Hide progress bar on Windows as robocopy progress is hard to parse
+        if sys.platform.startswith('win'):
+            self.progress.hide()
+            self.log.append("Note: Progress bar is disabled on Windows as robocopy does not provide incremental overall progress.")
+        else:
+            self.progress.show()
+
+
         # Pass all settings states to the worker
         self.worker = CopyWorker(
             self.src_dir, 
@@ -697,8 +777,8 @@ class CopyGUI(QWidget):
             move=move_state, 
             invert=invert_state,
             ignore_existing=ignore_existing_state,
-            compress=compress_state, # NEW PARAMETER
-            delete=delete_state      # NEW PARAMETER
+            compress=compress_state, 
+            delete=delete_state      
         )
 
         self.worker.progress_signal.connect(self.progress.setValue)
@@ -707,7 +787,7 @@ class CopyGUI(QWidget):
         self.worker.start()
 
     def cancel_copy(self):
-        self.log.append("\nCancelling Copy...\nTerminating rsync process now.\n")
+        self.log.append("\nCancelling Copy...\nTerminating process now.\n")
         if hasattr(self, "worker"):
             self.worker.cancel()
             self.copying = False
@@ -729,10 +809,6 @@ class CopyGUI(QWidget):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    
-    # Removed the problematic line causing the AttributeError.
-    # The QLocale line is also removed as it was not strictly necessary.
-    
     gui = CopyGUI()
     gui.show()
     sys.exit(app.exec())

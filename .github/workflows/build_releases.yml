@@ -19,8 +19,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Define the operating systems to build on
-        os: [macos-latest, ubuntu-latest]
+        # Define the operating systems to build on. ADDED WINDOWS.
+        os: [macos-latest, ubuntu-latest, windows-latest]
         python-version: ['3.11'] # Use a specific, stable Python version
 
     steps:
@@ -38,6 +38,8 @@ jobs:
           # PyInstaller is necessary for packaging
           # PySide6 is necessary for the GUI (make sure this matches your project)
           pip install PyInstaller PySide6
+        # Removed the problematic 'shell: ${{ runner.os == 'Windows' && ...' line.
+        # The default shell for each OS will handle these commands correctly.
 
       - name: Determine Output Name and Architecture
         id: vars
@@ -50,11 +52,38 @@ jobs:
           elif [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
             echo "ARCH=linux" >> $GITHUB_OUTPUT
             echo "EXT=" >> $GITHUB_OUTPUT # Linux executables don't typically have an extension
+          elif [ "${{ matrix.os }}" = "windows-latest" ]; then
+            echo "ARCH=windows" >> $GITHUB_OUTPUT
+            echo "EXT=.exe" >> $GITHUB_OUTPUT # Windows executables have .exe extension
           fi
 
       - name: Build Executable with PyInstaller
         shell: bash
         run: |
+          # The common arguments are now minimal, focusing on the app itself.
+          COMMON_ARGS="--clean --windowed --name FastCopyGUI --add-data assets:assets main.py"
+
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            # macOS: Targeted collection for core PySide6 modules to avoid framework conflicts.
+            echo "Building macOS .app bundle (using --onedir and targeted PySide6 collection)..."
+            pyinstaller ${COMMON_ARGS} \
+              --collect-all PySide6.QtCore \
+              --collect-all PySide6.QtWidgets \
+              --collect-all PySide6.QtGui \
+              --collect-all PySide6.QtNetwork
+          
+          elif [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            # Linux: Use --onefile for a single binary, collect all modules normally.
+            echo "Building Linux executable (using --onefile and full PySide6 collection)..."
+            pyinstaller ${COMMON_ARGS} --onefile \
+              --collect-all PySide6
+
+          elif [ "${{ matrix.os }}" = "windows-latest" ]; then
+            # Windows: Use --onefile and collect all modules normally.
+            echo "Building Windows executable (using --onefile and full PySide6 collection)..."
+            pyinstaller ${COMMON_ARGS} --onefile \
+              --collect-all PySide6
+          fi
           # The common arguments are now minimal, focusing on the app itself.
           COMMON_ARGS="--clean --windowed --name FastCopyGUI --add-data assets:assets main.py"
 
@@ -92,6 +121,10 @@ jobs:
           elif [ "${{ steps.vars.outputs.ARCH }}" = "linux" ]; then
             cd dist
             zip "../$ZIP_NAME" FastCopyGUI
+          # On Windows, the output is a single EXE.
+          elif [ "${{ steps.vars.outputs.ARCH }}" = "windows" ]; then
+            cd dist
+            zip "../$ZIP_NAME" FastCopyGUI.exe
           fi
           echo "ZIP_FILE=$ZIP_NAME" >> $GITHUB_ENV
         shell: bash
