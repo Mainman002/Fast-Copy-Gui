@@ -4,6 +4,7 @@ import signal
 import subprocess
 import json
 import multiprocessing
+import re # Added for rsync progress parsing
 from PySide6.QtWidgets import (
     QApplication, QWidget, QPushButton, QProgressBar, QTextEdit,
     QVBoxLayout, QHBoxLayout, QLabel, QFileDialog, QSpinBox, QSpacerItem, QSizePolicy,
@@ -31,43 +32,86 @@ class CopyWorker(QThread):
     progress_signal = Signal(int)
     log_signal = Signal(str)
     
-    def __init__(self, src, dst, threads=1, move=False, invert=False):
+    # Removed 'threads' argument as it is no longer used by rsync
+    def __init__(self, src, dst, move=False, invert=False):
         super().__init__()
-        self.src = src
-        self.dst = dst
-        self.threads = threads
+        
+        # Handle Invert logic here by swapping src/dst internally
+        if invert:
+            self.src = dst
+            self.dst = src
+        else:
+            self.src = src
+            self.dst = dst
+
         self.move = move
         self.invert = invert
         self._process = None
         self._cancel_requested = False
     
     def run(self):
-        if getattr(sys, 'frozen', False):
-            base_dir = sys._MEIPASS
-        else:
-            base_dir = os.path.dirname(__file__)
+        # --- 1. RSYNC COMMAND CONSTRUCTION AND PATH CHECK ---
+        
+        # Define the rsync executable path. 
+        # On macOS, Homebrew versions are often preferred over the default system version.
+        rsync_path = "rsync"
+        
+        # Check common Homebrew paths on macOS for Apple Silicon and Intel
+        homebrew_paths = [
+            "/opt/homebrew/bin/rsync",  # Apple Silicon default
+            "/usr/local/bin/rsync"     # Intel default
+        ]
+        
+        for path in homebrew_paths:
+            if os.path.exists(path):
+                rsync_path = path
+                break
 
-        script_path = os.path.join(base_dir, "fast_copy.sh")
-        cmd = [script_path, self.src, self.dst, "--thread", str(self.threads)]
+        # -a: archive mode
+        # -h: human-readable numbers
+        # -v: verbose output (keeps file names logging)
+        # --info=progress2: Reports OVERALL job progress (total bytes transferred)
+        
+        rsync_cmd_base = [rsync_path, "-ahv", "--info=progress2", "--exclude=.DS_Store"]
 
         if self.move:
-            cmd.append("--move")
+            rsync_cmd_base.append("--remove-source-files")
+
+        # Crucially, append a trailing slash to the source to copy contents, not the parent folder.
+        # This is the single rsync command for the entire operation.
+        cmd = rsync_cmd_base + [
+            os.path.join(self.src, ""), 
+            self.dst
+        ]
+        
+        try:
+            if rsync_path != "rsync":
+                self.log_signal.emit(f"Using Homebrew rsync: {rsync_path}")
+                
+            self.log_signal.emit(f"Starting rsync from '{self.src}' → '{self.dst}'")
+            self.log_signal.emit(f"Command: {' '.join(cmd)}\n")
+        except RuntimeError:
+            pass
             
-        if self.invert:
-            cmd.append("--invert")
+        # --- 2. EXECUTION ---
+        try:
+            self._process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True
+            )
+        except FileNotFoundError:
+            self.log_signal.emit(f"Error: rsync command not found at path: {rsync_path}. Ensure rsync is installed and accessible.")
+            return
 
-
-        self._process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            preexec_fn=os.setsid
-        )
-
+        # --- 3. PROGRESS PARSING (Using Regex for Robustness) ---
+        # Look for the progress2 line format: e.g., 1,234,567,890 2,000,000,000 10.00M/s 61% 0:00:20
+        
         for raw_line in self._process.stdout:
             if self._cancel_requested:
-                self._process.terminate()
+                # Signal the process to terminate
+                self._process.terminate() 
                 try:
                     self.log_signal.emit("Copy canceled by user.")
                 except RuntimeError:
@@ -75,38 +119,53 @@ class CopyWorker(QThread):
                 return
 
             line = raw_line.strip()
-
-            # --- PROGRESS LINES ---
-            if line.startswith("PROGRESS"):
+            
+            # --- PROGRESS LINES (Filter and extract overall progress) ---
+            # Identify the overall progress line by presence of B/s, %, and time remaining (:)
+            if 'B/s' in line and '%' in line and ':' in line:
                 try:
-                    _, cur, tot = line.split()
-                    current = int(cur)
-                    total = int(tot)
-
-                    if total > 0:
-                        percent = int((current / total) * 100)
+                    # Use regex to find the percentage number (\d+) followed by %
+                    match = re.search(r'\s(\d+)%', line)
+                    
+                    if match:
+                        percent = int(match.group(1))
                         self.progress_signal.emit(percent)
                 except:
+                    # Ignore lines that look like progress but fail parsing
                     pass
-                continue  # DO NOT LOG IT
+                # Crucial: Skip logging the continuous progress line to avoid spam
+                continue 
 
             # --- EVERYTHING ELSE ---
-            try:
-                self.log_signal.emit(line)
-            except RuntimeError:
-                pass
+            # Log all other output (file names from -v, initial lists, error messages)
+            if line:
+                try:
+                    self.log_signal.emit(line)
+                except RuntimeError:
+                    pass
 
         self._process.wait()
+        
+        # --- 4. COMPLETION / ERROR CHECK ---
+        return_code = self._process.returncode
+        
+        if return_code == 0:
+            message = "\nCopy complete!"
+        elif self._cancel_requested:
+            message = "\nCanceled."
+        else:
+            message = f"\nCopy failed with exit code {return_code}. Check log for details."
+
         try:
-            self.log_signal.emit("\nCopy complete!" if not self._cancel_requested else "Canceled.")
+            self.log_signal.emit(message)
         except RuntimeError:
             pass
     
     def cancel(self):
         self._cancel_requested = True
         if self._process:
+            # Send a termination signal
             self._process.terminate()
-            os.killpg(os.getpgid(self._process.pid), signal.SIGTERM)  # kills parent + children
 
 def apply_dark_palette(app):
     palette = QPalette()
@@ -123,29 +182,24 @@ def apply_dark_palette(app):
     palette.setColor(QPalette.HighlightedText, QColor(255, 255, 255))
     app.setPalette(palette)
 
-class NoSelectSpinBox(QSpinBox):
-    def focusInEvent(self, event):
-        super().focusInEvent(event)
-        # Clear selection immediately when focused
-        self.lineEdit().deselect()
-
 class CopyGUI(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Fast Copy GUI")
         self.resize(700, 500)
-        self.dark_mode = False
+        self.theme_toggle = False
         self.copying = False
         self.move = False
         self.invert = False
         self.setFocus(Qt.OtherFocusReason)
 
         # Folder Icon Image
+        # Note: 'icons/folder.svg' needs to be included in the assets folder for PyInstaller
         folder_icon = get_asset_path("icons/folder.svg")
 
         main_layout = QVBoxLayout(self)
 
-        # === Row 1: Header (Start/Cancel, Theme Toggle, Thread Count) ===
+        # === Row 1: Header (Start/Cancel, Theme Toggle) ===
         header_layout = QHBoxLayout()
         self.start_cancel_btn = QPushButton("Start Copy")
         header_layout.addWidget(self.start_cancel_btn)
@@ -159,36 +213,24 @@ class CopyGUI(QWidget):
         header_layout.addWidget(self.invert_checkbox)
 
         # Dark Theme Toggle
-        self.theme_btn = QCheckBox("Light")
-        header_layout.addWidget(self.theme_btn)
+        self.theme_checkbox = QCheckBox("Light")
+        header_layout.addWidget(self.theme_checkbox)
 
-        # Separator
+        # Separator (Removed the thread-related layout here)
         header_layout.addSpacerItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
-        threads_layout = QHBoxLayout()
         
-        # Threads
-        self.thread_label = QLabel("Threads:")
-        self.thread_spin = NoSelectSpinBox()
-        self.thread_spin.setMinimum(1)
-        self.thread_spin.setMaximum(multiprocessing.cpu_count())
-        self.thread_spin.setValue(2)
-        self.thread_spin.lineEdit().setReadOnly(True)
-        self.thread_spin.setFocusPolicy(Qt.NoFocus)
-        threads_layout.addWidget(self.thread_label)
-        threads_layout.addWidget(self.thread_spin)
-        header_layout.addLayout(threads_layout)
         main_layout.addLayout(header_layout)
 
         # Parent layout for the source row
         src_row_layout = QHBoxLayout()
-        src_row_layout.setAlignment(Qt.AlignTop)  # Align all children to top
+        src_row_layout.setAlignment(Qt.AlignTop)
 
         # --- Left side: fixed label + button ---
         left_src_layout = QHBoxLayout()
         left_src_layout.setAlignment(Qt.AlignTop)
         self.src_text_label = QLabel("Source")
         self.src_text_label.setFixedWidth(75)
-        self.src_text_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)  # Fix vertical
+        self.src_text_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
         # Source btn
         self.src_btn = QPushButton("")
@@ -208,9 +250,8 @@ class CopyGUI(QWidget):
 
         src_scroll_area = QScrollArea()
         src_scroll_area.setWidgetResizable(True)
-        # src_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         src_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
-        src_scroll_area.setFixedHeight(self.src_label.sizeHint().height()+16)  # fix vertical height
+        src_scroll_area.setFixedHeight(self.src_label.sizeHint().height()+16)
         src_scroll_area.setWidget(self.src_label)
         src_row_layout.addWidget(src_scroll_area)
 
@@ -225,7 +266,6 @@ class CopyGUI(QWidget):
         left_dst_layout.setAlignment(Qt.AlignTop)
         self.dst_text_label = QLabel("Destination")
         self.dst_text_label.setFixedWidth(75)
-        # self.dst_text_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         
         self.dst_btn = QPushButton("")
         self.dst_btn.setIcon(QIcon(folder_icon))
@@ -242,7 +282,6 @@ class CopyGUI(QWidget):
 
         dst_scroll_area = QScrollArea()
         dst_scroll_area.setWidgetResizable(True)
-        # dst_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         dst_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         dst_scroll_area.setFixedHeight(self.dst_label.sizeHint().height()+16)
         dst_scroll_area.setWidget(self.dst_label)
@@ -266,10 +305,9 @@ class CopyGUI(QWidget):
         self.src_btn.clicked.connect(self.select_src)
         self.dst_btn.clicked.connect(self.select_dst)
         self.start_cancel_btn.clicked.connect(self.toggle_copy)
-        self.theme_btn.clicked.connect(self.toggle_theme)
+        self.theme_checkbox.clicked.connect(self.toggle_theme)
         self.move_checkbox.clicked.connect(self.toggle_move)
         self.invert_checkbox.clicked.connect(self.toggle_invert)
-        self.thread_spin.valueChanged.connect(self.thread_changed)
 
         # Config
         self.src_dir = ""
@@ -281,39 +319,30 @@ class CopyGUI(QWidget):
     # Toggle Move
     def toggle_move(self):
         self.move = self.move_checkbox.isChecked()
-
         self.save_config()
 
     # Toggle Invert
     def toggle_invert(self):
         self.invert = self.invert_checkbox.isChecked()
-
         self.save_config()
 
     # Theme Apply
     def apply_theme(self):
-        if self.dark_mode:
+        if self.theme_toggle:
             apply_dark_palette(app)
         else:
             app.setPalette(QPalette())
 
-
-    # Thread Changed
-    def thread_changed(self):
-        self.save_config()
-        self.setFocus(Qt.OtherFocusReason)
-
     # Theme Toggle
     def toggle_theme(self):
-        self.dark_mode = self.theme_btn.isChecked()
-
+        self.theme_toggle = self.theme_checkbox.isChecked()
         self.save_config()
         self.apply_theme()
 
-        if self.dark_mode:
-            self.theme_btn.setText("Dark")
+        if self.theme_toggle:
+            self.theme_checkbox.setText("Dark")
         else:
-            self.theme_btn.setText("Light")
+            self.theme_checkbox.setText("Light")
 
     # Update folder labels
     def update_labels(self):
@@ -346,28 +375,29 @@ class CopyGUI(QWidget):
             try:
                 with open(CONFIG_FILE, "r") as f:
                     data = json.load(f)
-                src, dst, theme_toggle, threads, move, invert = data.get("src"), data.get("dst"), data.get("theme_toggle"), data.get("threads"), data.get("move"), data.get("invert")
+                src, dst, theme_toggle = data.get("src"), data.get("dst"), data.get("theme_toggle")
+                
                 if src and os.path.exists(src):
                     self.src_dir = src
                 if dst and os.path.exists(dst):
                     self.dst_dir = dst
-                # if theme_toggle:
-                self.dark_mode = theme_toggle
-                if self.dark_mode:
-                    self.theme_btn.setText("Dark")
+                    
+                self.theme_toggle = theme_toggle
+                if self.theme_toggle:
+                    self.theme_checkbox.setText("Dark")
                 else:
-                    self.theme_btn.setText("Light")
+                    self.theme_checkbox.setText("Light")
                 
+                theme_toggle = data.get("theme_toggle", False)
+                self.theme_checkbox.setChecked(theme_toggle)
+
                 move = data.get("move", False)
                 self.move_checkbox.setChecked(move)
+                self.move = move
 
                 invert = data.get("invert", False)
                 self.invert_checkbox.setChecked(invert)
-
-                # if threads and os.path.exists(threads):
-                threads = data.get("threads")
-                if isinstance(threads, int) and 1 <= threads <= multiprocessing.cpu_count():
-                    self.thread_spin.setValue(threads)
+                self.invert = invert
             except:
                 pass
 
@@ -375,8 +405,7 @@ class CopyGUI(QWidget):
         data = {
             "src": self.src_dir,
             "dst": self.dst_dir,
-            "theme_toggle": self.dark_mode,
-            "threads": self.thread_spin.value(),
+            "theme_toggle": self.theme_toggle,
             "move": self.move_checkbox.isChecked(),
             "invert": self.invert_checkbox.isChecked()
             }
@@ -398,23 +427,26 @@ class CopyGUI(QWidget):
             self.log.append("\nCopy already running.")
             return
 
-        threads = self.thread_spin.value()
         self.copying = True
         self.start_cancel_btn.setText("Cancel Copy")
         self.progress.setValue(0)
         self.progress.show()
-        self.worker = CopyWorker(self.src_dir, self.dst_dir, threads=threads, move=self.move_checkbox.isChecked(), invert=self.invert_checkbox.isChecked())
-        move=self.move_checkbox.isChecked()
-        self.worker.progress_signal.connect(self.progress.setValue)
+        
+        # Pass current UI settings to the worker (Removed threads argument)
+        self.worker = CopyWorker(
+            self.src_dir, 
+            self.dst_dir, 
+            move=self.move_checkbox.isChecked(), 
+            invert=self.invert_checkbox.isChecked()
+        )
 
-        # if line.startswith("PROGRESS"):
-        self.worker.log_signal.connect(lambda text: self.log.append('%s' % text))
-        # self.worker.log_signal.connect(lambda text: self.log.append('%s\n' % text))
+        self.worker.progress_signal.connect(self.progress.setValue)
+        self.worker.log_signal.connect(self.log.append)
         self.worker.finished.connect(self.on_finished)
         self.worker.start()
 
     def cancel_copy(self):
-        self.log.append("\nCancelling Copy...\nClosing active threads now\nDon't close the app until finished\n")
+        self.log.append("\nCancelling Copy...\nTerminating rsync process now.\n")
         if hasattr(self, "worker"):
             self.worker.cancel()
             self.copying = False
@@ -437,6 +469,7 @@ class CopyGUI(QWidget):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    # Ensure folder assets exist for folder icons, or remove if you use built-in icons
     gui = CopyGUI()
     gui.show()
     sys.exit(app.exec())
