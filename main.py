@@ -15,6 +15,15 @@ from PySide6.QtGui import (
 
 from PySide6.QtCore import QThread, Signal, QSize, Qt
 
+def get_asset_path(filename):
+    if getattr(sys, 'frozen', False):
+        # Running from PyInstaller bundle
+        base_dir = os.path.join(sys._MEIPASS, "assets")
+    else:
+        # Running from source
+        base_dir = os.path.join(os.path.dirname(__file__), "assets")
+    return os.path.join(base_dir, filename)
+
 CONFIG_FILE = os.path.expanduser("~/.fast_copy_gui_config.json")
 
 class CopyWorker(QThread):
@@ -94,6 +103,8 @@ class CopyGUI(QWidget):
         self.copying = False
         self.setFocus(Qt.OtherFocusReason)
 
+        folder_icon = get_asset_path("icons/folder.svg")
+
         main_layout = QVBoxLayout(self)
 
         # === Row 1: Header (Start/Cancel, Theme Toggle, Thread Count) ===
@@ -130,7 +141,7 @@ class CopyGUI(QWidget):
         self.src_text_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)  # Fix vertical
 
         self.src_btn = QPushButton("")
-        self.src_btn.setIcon(QIcon("assets/icons/folder.svg"))
+        self.src_btn.setIcon(QIcon(folder_icon))
         self.src_btn.setIconSize(QSize(30, 30))
         self.src_btn.setFixedSize(QSize(30, 30))
 
@@ -165,7 +176,7 @@ class CopyGUI(QWidget):
         # self.dst_text_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         
         self.dst_btn = QPushButton("")
-        self.dst_btn.setIcon(QIcon("assets/icons/folder.svg"))
+        self.dst_btn.setIcon(QIcon(folder_icon))
         self.dst_btn.setIconSize(QSize(30, 30))
         self.dst_btn.setFixedSize(QSize(30, 30))
 
