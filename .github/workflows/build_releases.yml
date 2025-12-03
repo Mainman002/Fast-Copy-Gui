@@ -55,10 +55,15 @@ jobs:
       - name: Build Executable with PyInstaller
         run: |
           # Use your main script name (main.py)
-          # --onefile creates a single executable file
-          # --windowed is important for GUI apps on macOS/Windows to prevent console window
-          # -n sets the base name of the executable
-          pyinstaller --onefile --windowed --name FastCopyGUI main.py
+          # --onefile creates a single executable file for maximum portability (Linux)
+          # --windowed prevents the console window from appearing (macOS/Windows)
+          # --add-data 'assets:assets' bundles your necessary assets folder
+          # --collect-all PySide6 ensures all necessary Qt plugins are included
+          pyinstaller --onefile --windowed \
+            --name FastCopyGUI \
+            --add-data 'assets:assets' \
+            --collect-all PySide6 \
+            main.py
 
       - name: Create Final Artifact Zip
         run: |
