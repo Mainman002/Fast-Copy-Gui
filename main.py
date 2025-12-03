@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from PySide6.QtGui import (
-    QPalette, QColor
+    QPalette, QColor, QIcon
 )
 
 from PySide6.QtCore import QThread, Signal, QSize, Qt
@@ -128,8 +128,12 @@ class CopyGUI(QWidget):
         self.src_text_label = QLabel("Source")
         self.src_text_label.setFixedWidth(75)
         self.src_text_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)  # Fix vertical
-        self.src_btn = QPushButton("📁")
+
+        self.src_btn = QPushButton("")
+        self.src_btn.setIcon(QIcon("assets/icons/folder.svg"))
+        self.src_btn.setIconSize(QSize(30, 30))
         self.src_btn.setFixedSize(QSize(30, 30))
+
         left_src_layout.addWidget(self.src_text_label)
         left_src_layout.addWidget(self.src_btn)
         src_row_layout.addLayout(left_src_layout)
@@ -159,8 +163,12 @@ class CopyGUI(QWidget):
         self.dst_text_label = QLabel("Destination")
         self.dst_text_label.setFixedWidth(75)
         # self.dst_text_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.dst_btn = QPushButton("📁")
+        
+        self.dst_btn = QPushButton("")
+        self.dst_btn.setIcon(QIcon("assets/icons/folder.svg"))
+        self.dst_btn.setIconSize(QSize(30, 30))
         self.dst_btn.setFixedSize(QSize(30, 30))
+
         left_dst_layout.addWidget(self.dst_text_label)
         left_dst_layout.addWidget(self.dst_btn)
         dst_row_layout.addLayout(left_dst_layout)
