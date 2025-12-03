@@ -46,7 +46,7 @@ pip install PySide6
 Clone the repository and run the main application:
 
 ```bash
-git clone https://github.com/Mainman002/Fast-Copy-GUI.git
+git clone -b cp https://github.com/Mainman002/Fast-Copy-Gui.git
 cd Fast-Copy-GUI
 python main.py
 ```
