@@ -1,28 +1,42 @@
 # Fast-Copy-GUI
 
-Fast-Copy-GUI is a cross-platform desktop application (macOS and Linux) that provides a graphical frontend for parallel file copying. It allows users to select source and destination directories, configure the number of copy threads, monitor progress in real-time, and manage operations efficiently with a simple and responsive interface.
+**Fast-Copy-GUI** is a cross-platform desktop application (macOS and Linux) that provides a graphical frontend for fast, robust file synchronization and copying using the native **rsync** utility.
+It allows users to select source and destination directories, configure move/invert options, monitor progress in real-time, and manage operations efficiently with a simple and responsive interface.
+
+---
 
 ## Features
 
 * Select source and destination directories using a folder picker.
-* Configure the number of parallel copy threads.
+* **New:** Uses the robust `rsync` utility for reliable file transfer and integrity checking.
+* **New:** Options to perform a move operation (`--remove-source-files`) or invert the source/destination paths.
 * Start and cancel copy operations at any time.
 * Progress bar and real-time log output for monitoring copy status.
 * Dark and light themes.
-* Persistent configuration for last used folders, theme, and thread count.
+* Persistent configuration for last used folders, theme, and settings.
 
-<img width="812" height="640" alt="Screenshot 2025-12-02 at 10 55 53 AM" src="https://github.com/user-attachments/assets/79531fd6-017e-4469-a472-9da96f5e10c8" />
+<img width="812" height="640" alt="Screenshot 2025-12-03 at 6 44 50 AM" src="https://github.com/user-attachments/assets/d64e82a0-082b-458d-bfed-b410e7aadfd5" />
+
+---
 
 ## Installation
 
 ### Prerequisites
 
-* Python 3.11 or higher.
-* PySide6 for GUI: install via pip.
+* **Python 3.11 or higher**
+* **PySide6** (install via pip)
+* **rsync** (must be installed and accessible via system path)
 
-#### Linux Dependencies
+On macOS, the application prefers the Homebrew version if installed at:
 
-Depending on the distribution, you may need to install additional system libraries:
+* `/opt/homebrew/bin/rsync`
+* `/usr/local/bin/rsync`
+
+---
+
+## Linux Dependencies
+
+Depending on distribution, you may need:
 
 * `libgl1-mesa-glx`
 * `libxcb1`
@@ -30,69 +44,84 @@ Depending on the distribution, you may need to install additional system librari
 * `libxext6`
 * `libfreetype6`
 
-#### macOS Dependencies
+---
 
-* PySide6 installed via pip.
-* No additional system dependencies are typically required for macOS.
+## macOS Dependencies
 
-### Install Python Dependencies
+* PySide6 installed via pip
+* No additional system dependencies typically required
+
+---
+
+## Install Python Dependencies
 
 ```bash
 pip install PySide6
 ```
 
+---
+
 ## Running from Source
 
-Clone the repository and run the main application:
-
 ```bash
-git clone https://github.com/Mainman002/Fast-Copy-GUI.git
+git clone https://github.com/Mainman002/Fast-Copy-Gui.git
 cd Fast-Copy-GUI
 python main.py
 ```
 
+---
+
 ## Building Standalone Executables
 
-To build a standalone executable for Linux or macOS, PyInstaller can be used:
+To build a standalone executable for Linux or macOS, use **PyInstaller**. (Note: we no longer bundle `fast_copy.sh.linux`.)
 
-# linux
+### Linux
+
 ```bash
-pyinstaller --noconfirm --windowed --name "FastCopyGUI" \
-    --add-data "fast_copy.sh:." main.py
+./build_linux.sh
 ```
 
-# macOS
+### macOS
+
 ```bash
-pyinstaller --noconfirm --windowed --name "FastCopyGUI" \
-    --add-data "fast_copy.sh:." main.py
+./build_macos.sh
 ```
 
-The resulting executable will be located in the `dist` directory.
+The resulting executable will be located in the **dist** directory.
+
+---
 
 ## Usage
 
-1. Click the "Source" button to select the source directory.
-2. Click the "Destination" button to select the destination directory.
-3. Adjust the "Threads" spin box to set the number of parallel copy threads.
-4. Click "Start Copy" to begin the operation. Click again to cancel if needed.
-5. Monitor progress using the progress bar and log output.
+1. Click **"Source"** to select the source directory.
+2. Click **"Destination"** to select the destination directory.
+3. (Optional) Check **"Move"** to delete files from the source after a successful copy.
+4. (Optional) Check **"Invert"** to swap the source and destination directories.
+5. Click **"Start Copy"** to begin.
+6. Click **"Cancel Copy"** if needed.
+7. Monitor progress using the progress bar and log output.
+
+---
 
 ## Configuration
 
-Fast-Copy-GUI stores configuration in the file:
+Fast-Copy-GUI stores its configuration in:
 
 ```
 ~/.fast_copy_gui_config.json
 ```
 
-The configuration includes:
+Stored data includes:
 
-* Last used source and destination directories.
-* Theme (dark or light).
-* Number of copy threads.
+* Last used source and destination directories
+* Theme (dark or light)
+* Last used states of **Move** and **Invert** options
 
-The configuration is automatically updated whenever settings are changed.
+Configuration updates automatically whenever settings change.
+
+---
 
 ## License
 
-This project is licensed under the MIT License. See the `LICENSE` file for details.
+Licensed under the **MIT License**.
+See the `LICENSE` file for details.
