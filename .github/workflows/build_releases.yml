@@ -55,9 +55,8 @@ jobs:
       - name: Build Executable with PyInstaller
         shell: bash
         run: |
-          # UPDATED: Added --exclude-module flags for problematic PySide6 dependencies (Qt3D, QtWebEngine) 
-          # which often cause FileExistsError on macOS during COLLECT phase.
-          COMMON_ARGS="--windowed --name FastCopyGUI \
+          # FIX: Added --clean to prevent caching issues that cause the FileExistsError on macOS.
+          COMMON_ARGS="--clean --windowed --name FastCopyGUI \
             --add-data assets:assets \
             --collect-all PySide6 \
             --exclude-module PySide6.Qt3DAnimation \
