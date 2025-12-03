@@ -23,8 +23,15 @@ def get_asset_path(filename):
         base_dir = os.path.join(os.path.dirname(__file__), "assets")
     return os.path.join(base_dir, filename)
 
-folder_icon_light = get_asset_path("icons/dark_folder.png")
-folder_icon_dark = get_asset_path("icons/light_folder.png")
+# Placeholder assets, assuming they exist or using system defaults if they don't
+try:
+    folder_icon_light = get_asset_path("icons/dark_folder.png")
+    folder_icon_dark = get_asset_path("icons/light_folder.png")
+except:
+    # Fallback paths if get_asset_path fails in a non-bundled environment
+    folder_icon_light = ""
+    folder_icon_dark = ""
+
 
 CONFIG_FILE = os.path.expanduser("~/.fast_copy_gui_config.json")
 
@@ -32,7 +39,7 @@ class CopyWorker(QThread):
     progress_signal = Signal(int)
     log_signal = Signal(str)
     
-    def __init__(self, src, dst, move=False, invert=False, ignore_existing=True):
+    def __init__(self, src, dst, move=False, invert=False, ignore_existing=True, compress=False, delete=False):
         super().__init__()
         
         if invert:
@@ -45,6 +52,8 @@ class CopyWorker(QThread):
         self.move = move
         self.invert = invert
         self.ignore_existing = ignore_existing
+        self.compress = compress
+        self.delete = delete # New flag for mirroring/deletion
         self._process = None
         self._cancel_requested = False
     
@@ -61,6 +70,7 @@ class CopyWorker(QThread):
                 rsync_path = path
                 break
 
+        # Base command with archive, human-readable, verbose, progress reporting, and exclusion
         rsync_cmd_base = [rsync_path, "-ahv", "--info=progress2", "--exclude=.DS_Store"]
 
         if self.move:
@@ -68,7 +78,16 @@ class CopyWorker(QThread):
         
         if self.ignore_existing:
             rsync_cmd_base.append("--ignore-existing")
+            
+        if self.compress: # New: Compression for transfers
+            rsync_cmd_base.append("-z")
 
+        if self.delete: # New: Mirroring/Deletion from destination
+            # The --delete option ensures that files existing in the destination 
+            # but not in the source are removed from the destination.
+            rsync_cmd_base.append("--delete") 
+
+        # IMPORTANT: The trailing slash on self.src tells rsync to copy the *contents* of the source folder.
         cmd = rsync_cmd_base + [
             os.path.join(self.src, ""), 
             self.dst
@@ -76,7 +95,7 @@ class CopyWorker(QThread):
         
         try:
             if rsync_path != "rsync":
-                self.log_signal.emit(f"Using Homebrew rsync: {rsync_path}")
+                self.log_signal.emit(f"Using rsync path: {rsync_path}")
                 
             self.log_signal.emit(f"Starting rsync from '{self.src}' → '{self.dst}'")
             self.log_signal.emit(f"Command: {' '.join(cmd)}\n")
@@ -108,6 +127,7 @@ class CopyWorker(QThread):
 
             line = raw_line.strip()
             
+            # The progress line usually contains 'B/s', '%' and ':'
             if 'B/s' in line and '%' in line and ':' in line:
                 try:
                     match = re.search(r'\s(\d+)%', line)
@@ -174,9 +194,13 @@ class CopyGUI(QWidget):
         self.resize(700, 500)
         self.theme_toggle = False
         self.copying = False
+        # Initialize new rsync flag properties
         self.move = False
         self.invert = False
         self.ignore_existing = True
+        self.compress = False # New property
+        self.delete = False # New property
+
         self.log_font_size = 12
         self.setFocus(Qt.OtherFocusReason)
 
@@ -218,6 +242,10 @@ class CopyGUI(QWidget):
         self.move_checkbox = QCheckBox("Move (Remove source files)")
         self.invert_checkbox = QCheckBox("Invert (Swap src/dst)")
         self.ignore_existing_checkbox = QCheckBox("Ignore Existing Files (faster)")
+        
+        # NEW RSYNC OPTIONS
+        self.compress_checkbox = QCheckBox("Compress data during transfer (-z)")
+        self.delete_checkbox = QCheckBox("Delete extraneous files from destination (--delete)")
 
     def create_main_copy_view(self):
         widget = QWidget()
@@ -229,12 +257,19 @@ class CopyGUI(QWidget):
         header_layout.addWidget(self.start_cancel_btn)
 
         # Move
-        self.move_checkbox = QCheckBox("Move")
-        header_layout.addWidget(self.move_checkbox)
+        self.move_checkbox_main = QCheckBox("Move")
+        header_layout.addWidget(self.move_checkbox_main)
+        # We need to mirror the state between the main view and the settings view checkbox
+        self.move_checkbox_main.stateChanged.connect(self.move_checkbox.setChecked)
+        self.move_checkbox.stateChanged.connect(self.move_checkbox_main.setChecked)
 
         # Invert
-        self.invert_checkbox = QCheckBox("Invert")
-        header_layout.addWidget(self.invert_checkbox)
+        self.invert_checkbox_main = QCheckBox("Invert")
+        header_layout.addWidget(self.invert_checkbox_main)
+        # We need to mirror the state between the main view and the settings view checkbox
+        self.invert_checkbox_main.stateChanged.connect(self.invert_checkbox.setChecked)
+        self.invert_checkbox.stateChanged.connect(self.invert_checkbox_main.setChecked)
+
 
         # Separator 
         header_layout.addSpacerItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
@@ -405,18 +440,31 @@ class CopyGUI(QWidget):
         grid_layout = QGridLayout(content_widget)
         grid_layout.setContentsMargins(10, 10, 10, 10)
         
-        # Group Box for Rsync Flags
-        group_flags = QGroupBox("Rsync Command Flags")
+        # Group Box for Core Operations
+        group_operations = QGroupBox("Core Operation Flags")
+        operations_layout = QVBoxLayout(group_operations)
+        operations_layout.addWidget(self.move_checkbox)
+        operations_layout.addWidget(self.invert_checkbox)
+        grid_layout.addWidget(group_operations, 0, 0, 1, 2)
+        
+        # Group Box for Rsync Optimization & Network
+        group_flags = QGroupBox("Rsync Optimization & Network Flags")
         flags_layout = QVBoxLayout(group_flags)
         
         flags_layout.addWidget(self.ignore_existing_checkbox)
-        # flags_layout.addWidget(self.move_checkbox)
-        # flags_layout.addWidget(self.invert_checkbox)
+        flags_layout.addWidget(self.compress_checkbox) # NEW OPTION
         
-        grid_layout.addWidget(group_flags, 0, 0, 1, 2)
+        grid_layout.addWidget(group_flags, 1, 0, 1, 2)
+        
+        # Group Box for Sync/Mirroring (DANGER)
+        group_sync = QGroupBox("Mirroring/Deletion (USE WITH CAUTION)")
+        sync_layout = QVBoxLayout(group_sync)
+        sync_layout.addWidget(self.delete_checkbox) # NEW OPTION
+        
+        grid_layout.addWidget(group_sync, 2, 0, 1, 2)
         
         # Spacer to push content to the top
-        grid_layout.addItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding), 1, 0)
+        grid_layout.addItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding), 3, 0)
         
         return scroll_area
 
@@ -439,9 +487,19 @@ class CopyGUI(QWidget):
         
         # Setting Widgets Signals
         self.theme_checkbox.clicked.connect(self.toggle_theme)
+        
+        # Link main view checkboxes to state and save
+        self.move_checkbox_main.clicked.connect(self.toggle_move)
+        self.invert_checkbox_main.clicked.connect(self.toggle_invert)
+        
+        # Link settings view checkboxes to state and save
         self.move_checkbox.clicked.connect(self.toggle_move)
         self.invert_checkbox.clicked.connect(self.toggle_invert)
+        
         self.ignore_existing_checkbox.clicked.connect(self.toggle_ignore_existing)
+        self.compress_checkbox.clicked.connect(self.toggle_compress) # NEW SIGNAL
+        self.delete_checkbox.clicked.connect(self.toggle_delete)     # NEW SIGNAL
+        
         self.font_size_spinbox.valueChanged.connect(self.set_log_font_size)
 
     # --- Font and Theme Management ---
@@ -493,8 +551,10 @@ class CopyGUI(QWidget):
         
         # Update icon colors based on theme
         icon = folder_icon_dark if self.theme_toggle else folder_icon_light
-        self.src_btn.setIcon(QIcon(icon))
-        self.dst_btn.setIcon(QIcon(icon))
+        # Check if icon path is valid before setting
+        if icon:
+            self.src_btn.setIcon(QIcon(icon))
+            self.dst_btn.setIcon(QIcon(icon))
 
     def toggle_theme(self):
         self.theme_toggle = self.theme_checkbox.isChecked()
@@ -513,12 +573,25 @@ class CopyGUI(QWidget):
     def toggle_ignore_existing(self):
         self.ignore_existing = self.ignore_existing_checkbox.isChecked()
         self.save_config()
+        
+    def toggle_compress(self): # NEW TOGGLE
+        self.compress = self.compress_checkbox.isChecked()
+        self.save_config()
+        
+    def toggle_delete(self): # NEW TOGGLE
+        self.delete = self.delete_checkbox.isChecked()
+        self.save_config()
 
     # --- Directory Management ---
 
     def update_labels(self):
         self.src_label.setText(self.src_dir or "None")
         self.dst_label.setText(self.dst_dir or "None")
+        
+        # Update main view checkboxes from persistent state on load
+        self.move_checkbox_main.setChecked(self.move)
+        self.invert_checkbox_main.setChecked(self.invert)
+
 
     def select_src(self):
         start_dir = self.src_dir if os.path.exists(self.src_dir) else str(QDir.homePath())
@@ -563,6 +636,12 @@ class CopyGUI(QWidget):
 
                 self.ignore_existing = data.get("ignore_existing", True)
                 self.ignore_existing_checkbox.setChecked(self.ignore_existing)
+                
+                self.compress = data.get("compress", False) # NEW CONFIG LOAD
+                self.compress_checkbox.setChecked(self.compress)
+                
+                self.delete = data.get("delete", False) # NEW CONFIG LOAD
+                self.delete_checkbox.setChecked(self.delete)
 
             except Exception as e:
                 # print(f"Error loading config: {e}") # Suppress console output for simple errors
@@ -576,6 +655,8 @@ class CopyGUI(QWidget):
             "move": self.move_checkbox.isChecked(),
             "invert": self.invert_checkbox.isChecked(),
             "ignore_existing": self.ignore_existing_checkbox.isChecked(),
+            "compress": self.compress_checkbox.isChecked(), # NEW CONFIG SAVE
+            "delete": self.delete_checkbox.isChecked(),     # NEW CONFIG SAVE
             "log_font_size": self.log_font_size
             }
         
@@ -597,18 +678,27 @@ class CopyGUI(QWidget):
             self.log.append("\nCopy already running.")
             return
 
+        # Use the settings checkbox state as the source of truth
+        move_state = self.move_checkbox.isChecked()
+        invert_state = self.invert_checkbox.isChecked()
+        ignore_existing_state = self.ignore_existing_checkbox.isChecked()
+        compress_state = self.compress_checkbox.isChecked()
+        delete_state = self.delete_checkbox.isChecked()
+
         self.copying = True
         self.start_cancel_btn.setText("Cancel Copy")
         self.progress.setValue(0)
         self.progress.show()
         
-        # Ensure copy settings are based on the latest checkbox states (even if settings screen is closed)
+        # Pass all settings states to the worker
         self.worker = CopyWorker(
             self.src_dir, 
             self.dst_dir, 
-            move=self.move_checkbox.isChecked(), 
-            invert=self.invert_checkbox.isChecked(),
-            ignore_existing=self.ignore_existing_checkbox.isChecked()
+            move=move_state, 
+            invert=invert_state,
+            ignore_existing=ignore_existing_state,
+            compress=compress_state, # NEW PARAMETER
+            delete=delete_state      # NEW PARAMETER
         )
 
         self.worker.progress_signal.connect(self.progress.setValue)
