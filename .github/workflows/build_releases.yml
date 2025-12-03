@@ -38,8 +38,6 @@ jobs:
           # PyInstaller is necessary for packaging
           # PySide6 is necessary for the GUI (make sure this matches your project)
           pip install PyInstaller PySide6
-        # Removed the problematic 'shell: ${{ runner.os == 'Windows' && ...' line.
-        # The default shell for each OS will handle these commands correctly.
 
       - name: Determine Output Name and Architecture
         id: vars
@@ -60,6 +58,9 @@ jobs:
       - name: Build Executable with PyInstaller
         shell: bash
         run: |
+          # 1. Clean the 'dist' directory completely to prevent 'output directory not empty' errors.
+          rm -rf dist
+          
           # The common arguments are now minimal, focusing on the app itself.
           COMMON_ARGS="--clean --windowed --name FastCopyGUI --add-data assets:assets main.py"
 
@@ -84,50 +85,35 @@ jobs:
             pyinstaller ${COMMON_ARGS} --onefile \
               --collect-all PySide6
           fi
-          # The common arguments are now minimal, focusing on the app itself.
-          COMMON_ARGS="--clean --windowed --name FastCopyGUI --add-data assets:assets main.py"
-
-          # IMPORTANT FIX: Replaced --collect-all PySide6 with targeted collection
-          # to avoid symbolic link conflicts from Qt3D and QtWebEngine frameworks.
-          # We explicitly collect binaries and plugins for common GUI modules.
-
-          if [ "${{ matrix.os }}" = "macos-latest" ]; then
-            # macOS: Use --onedir (PyInstaller's default) for stable framework bundling.
-            # Explicitly collecting core PySide6 components.
-            echo "Building macOS .app bundle (using --onedir and targeted PySide6 collection)..."
-            pyinstaller ${COMMON_ARGS} \
-              --collect-all PySide6.QtCore \
-              --collect-all PySide6.QtWidgets \
-              --collect-all PySide6.QtGui \
-              --collect-all PySide6.QtNetwork
-          else
-            # Linux: Use --onefile and collect all modules normally, as Linux bundles are generally more stable.
-            echo "Building Linux executable (using --onefile and full PySide6 collection)..."
-            pyinstaller ${COMMON_ARGS} --onefile \
-              --collect-all PySide6
-          fi
 
       - name: Create Final Artifact Zip
         run: |
           # The executable is created in the 'dist' folder.
-          # Create a compressed archive for the built executable.
           ZIP_NAME="FastCopyGUI-${{ steps.vars.outputs.ARCH }}-${{ github.sha }}.zip"
           
-          # On macOS, the output is a .app bundle which is a directory.
           if [ "${{ steps.vars.outputs.ARCH }}" = "macos" ]; then
+            # macOS and Linux use 'zip' utility
             cd dist
             zip -r "../$ZIP_NAME" FastCopyGUI.app
-          # On Linux, the output is a single binary.
           elif [ "${{ steps.vars.outputs.ARCH }}" = "linux" ]; then
             cd dist
             zip "../$ZIP_NAME" FastCopyGUI
-          # On Windows, the output is a single EXE.
           elif [ "${{ steps.vars.outputs.ARCH }}" = "windows" ]; then
-            cd dist
-            zip "../$ZIP_NAME" FastCopyGUI.exe
+            # Windows runner uses 7z (pre-installed) for compression
+            # The '7z a' command creates an archive: a - add, -tzip - use zip format
+            echo "Zipping artifact using 7z..."
+            if exist dist\FastCopyGUI.exe (
+                7z a -tzip "$ZIP_NAME" dist\FastCopyGUI.exe
+            ) else (
+                # Handle potential PyInstaller one-dir output if build method was changed
+                7z a -tzip "$ZIP_NAME" dist\FastCopyGUI\*
+            )
           fi
           echo "ZIP_FILE=$ZIP_NAME" >> $GITHUB_ENV
-        shell: bash
+        # We must use PowerShell for the Windows (7z) logic to work reliably, 
+        # but the shell must be dynamically set or the command adapted.
+        # Since the Windows logic is now in PowerShell syntax, we set the shell for Windows only.
+        shell: ${{ runner.os == 'Windows' && 'powershell' || 'bash' }}
         
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
