@@ -1208,6 +1208,10 @@ class CopyGUI(QWidget):
             self.log.append("Please select a bottom directory")
             return
         
+        elif bool(self.src_dir == self.dst_dir):
+            self.log.append("Please make sure top and bottom directories are not the same folder path")
+            return
+        
         # Use the settings checkbox state as the source of truth
         move_state = self.move_checkbox.isChecked()
         invert_state = self.invert_checkbox.isChecked()
