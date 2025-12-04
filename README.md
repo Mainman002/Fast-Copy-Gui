@@ -15,7 +15,7 @@ It allows users to select source and destination directories, configure move/inv
 * Dark and light themes.
 * Persistent configuration for last used folders, theme, and settings.
 
-<img width="812" height="640" alt="Screenshot 2025-12-03 at 6 44 50 AM" src="https://github.com/user-attachments/assets/d64e82a0-082b-458d-bfed-b410e7aadfd5" />
+<img width="812" height="640" alt="Screenshot 2025-12-03 at 8 57 50 PM" src="https://github.com/user-attachments/assets/755e4af5-bd4c-41d5-af5c-cc53d60c01d1" />
 
 ---
 
