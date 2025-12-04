@@ -476,11 +476,7 @@ class CopyGUI(QWidget):
         self.invert_checkbox_icon.setIconSize(QSize(30, 30))
         self.invert_checkbox_icon.setFixedSize(QSize(30, 30))
 
-        self.invert_icon_label = QLabel("")
-
-        # invert_arrow_layout.addStretch(1)
         invert_arrow_layout.addWidget(self.invert_checkbox_icon)
-        invert_arrow_layout.addWidget(self.invert_icon_label)
         invert_arrow_layout.addStretch(1)
         
         layout.addLayout(invert_arrow_layout)
@@ -742,9 +738,6 @@ class CopyGUI(QWidget):
             tooltip = "Copy direction is Normal (Source folder to Destination folder)"
             
         if icon_path:
-            # self.invert_checkbox_main.setIcon(QIcon(icon_path))
-            # self.invert_checkbox_main.setToolTip(tooltip)
-
             self.invert_checkbox_icon.setIcon(QIcon(icon_path))
             self.invert_checkbox_icon.setToolTip(tooltip)
             
@@ -795,13 +788,6 @@ class CopyGUI(QWidget):
             return  # No change → avoid loops
 
         self.invert = value
-
-        print( value )
-
-        if bool(value):
-            self.invert_icon_label.setText("-> %s" % self.dst_dir)
-        else:
-            self.invert_icon_label.setText("-> %s" % self.src_dir)
 
         # Update checkbox without causing another signal
         with QSignalBlocker(self.invert_checkbox):
@@ -884,7 +870,6 @@ class CopyGUI(QWidget):
         
         # Update main view checkboxes from persistent state on load
         self.move_checkbox_main.setChecked(self.move)
-        # self.invert_checkbox_main.setChecked(self.invert)
         
         # Also ensure the settings checkboxes are synced (important after load_config)
         self.move_checkbox.setChecked(self.move)
@@ -945,19 +930,13 @@ class CopyGUI(QWidget):
         self.delete = data.get("delete", False)
         self.delete_checkbox.setChecked(self.delete)
 
-        if bool(self.invert):
-            self.invert_icon_label.setText("-> %s" % self.dst_dir)
-        else:
-            self.invert_icon_label.setText("-> %s" % self.src_dir)
-
-        self.set_invert(self.invert_state)
-
     def load_config(self):
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, "r") as f:
                     data = json.load(f)
                     self.set_config_data( data )
+                    self.set_invert(self.invert_state)
 
             except Exception as e:
                 # print(f"Error loading config: {e}")
@@ -998,6 +977,18 @@ class CopyGUI(QWidget):
             self.log.append("\nCopy already running.")
             return
 
+        if bool(self.src_dir == "" or self.src_dir == "None" and self.dst_dir == "" or self.dst_dir == "None"):
+            self.log.append("\nPlease select a top and bottom directory")
+            return
+        
+        elif bool(self.src_dir == "" or self.src_dir == "None"):
+            self.log.append("\nPlease select a top directory")
+            return
+        
+        elif bool(self.dst_dir == "" or self.dst_dir == "None"):
+            self.log.append("\nPlease select a bottom directory")
+            return
+        
         # Use the settings checkbox state as the source of truth
         move_state = self.move_checkbox.isChecked()
         invert_state = self.invert_checkbox.isChecked()
