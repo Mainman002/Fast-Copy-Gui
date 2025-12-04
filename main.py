@@ -7,14 +7,29 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QPushButton, QProgressBar, QTextEdit,
     QVBoxLayout, QHBoxLayout, QLabel, QFileDialog, QSpinBox, 
     QSpacerItem, QSizePolicy, QScrollArea, QCheckBox, QStackedWidget,
-    QGridLayout, QGroupBox
+    QStyleFactory, QGridLayout, QGroupBox
 )
 
 from PySide6.QtGui import (
     QPalette, QColor, QIcon
 )
 
-from PySide6.QtCore import QThread, Signal, QSize, Qt, QDir, QLocale
+from PySide6.QtCore import (
+    QThread, Signal, QSize, Qt, QDir, QCoreApplication,
+    QSignalBlocker
+    )
+
+default_config={
+    "src":"",
+    "dst":"",
+    "theme_toggle":True,
+    "log_font_size":16,
+    "move":False,
+    "invert":False,
+    "ignore_existing":True,
+    "compress":False,
+    "delete":False,
+    }
 
 def get_asset_path(filename):
     # Determine the correct path for assets, supporting both bundled (PyInstaller) and non-bundled execution.
@@ -25,16 +40,68 @@ def get_asset_path(filename):
     return os.path.join(base_dir, filename)
 
 # Placeholder assets, assuming they exist or using system defaults if they don't
+# NOTE: The file paths below rely on the assets folder being structured:
+# assets/icons/dark_folder.png, etc.
 try:
+    # Folder Icon
     folder_icon_light = get_asset_path("icons/dark_folder.png")
     folder_icon_dark = get_asset_path("icons/light_folder.png")
+
+    # Arrow Up (Inverted State: DST -> SRC)
+    arrow_up_icon_light = get_asset_path("icons/arrow_up_dark.png")
+    arrow_up_icon_dark = get_asset_path("icons/arrow_up_light.png")
+
+    # Arrow Down (Normal State: SRC -> DST)
+    arrow_down_icon_light = get_asset_path("icons/arrow_down_dark.png")
+    arrow_down_icon_dark = get_asset_path("icons/arrow_down_light.png")
 except:
     # Fallback paths if get_asset_path fails in a non-bundled environment
-    folder_icon_light = ""
+    
+    # Folder Icon (Using system-like icons as fallback if custom assets fail)
+    folder_icon_light = "" 
     folder_icon_dark = ""
+
+    # Arrow Up
+    arrow_up_icon_light = ""
+    arrow_up_icon_dark = ""
+
+    # Arrow Down
+    arrow_down_icon_light = ""
+    arrow_down_icon_dark = ""
 
 
 CONFIG_FILE = os.path.expanduser("~/.fast_copy_gui_config.json")
+
+# --- UTILITY FUNCTION: CHECK FOR RECURSIVE COPY DANGER ---
+def is_recursive_copy(src, dst):
+    """
+    Checks if one path is a subdirectory of the other, which would lead to
+    an infinite recursive copy operation.
+    """
+    try:
+        # Resolve paths to handle symlinks and relative notation (like '.' or '..')
+        src_path = os.path.realpath(src)
+        dst_path = os.path.realpath(dst)
+    except Exception:
+        # If paths are invalid or inaccessible, return False and let the copy process
+        # handle the failure later.
+        return False 
+    
+    # If the paths are identical, it's not a recursive copy but it's pointless.
+    if src_path == dst_path:
+        return False
+        
+    # Check if src is inside dst (common path is dst)
+    if src_path.startswith(dst_path + os.sep):
+        return True
+    
+    # Check if dst is inside src (common path is src)
+    if dst_path.startswith(src_path + os.sep):
+        return True
+
+    return False
+# --- END UTILITY FUNCTION ---
+
 
 class CopyWorker(QThread):
     progress_signal = Signal(int)
@@ -58,14 +125,34 @@ class CopyWorker(QThread):
         self.delete = delete
         self._process = None
         self._cancel_requested = False
-    
+        
+    # --- Recursive Empty Folder Deletion ---
+    def delete_empty_folders_recursive(self, path):
+        """Recursively removes empty directories within the given path."""
+        if not os.path.isdir(path):
+            return
+
+        for entry in os.listdir(path):
+            full_path = os.path.join(path, entry)
+            if os.path.isdir(full_path):
+                self.delete_empty_folders_recursive(full_path)
+
+        # After recursively checking children, check if this directory is empty.
+        try:
+            if not os.listdir(path):
+                os.rmdir(path)
+                self.log_signal.emit(f"[Cleanup] Removed empty directory: {path}")
+        except OSError as e:
+            # Handle permission denied or other OS errors
+            self.log_signal.emit(f"[Cleanup Error] Failed to remove {path}: {e}")
+    # --- END CLEANUP ---
+
     def run(self):
         # --- 1. COMMAND CONSTRUCTION (Cross-Platform) ---
         
         # Windows: Use Robocopy
         if sys.platform.startswith('win'):
             # robocopy source destination [file [file]...] [options]
-            # Robocopy is natively available on Windows
             cmd_base = ["robocopy", self.src, self.dst]
             
             # /E: Copy subdirectories, including empty ones (similar to rsync's archive mode)
@@ -119,9 +206,11 @@ class CopyWorker(QThread):
             rsync_cmd_base = [rsync_path, "-ahv", "--info=progress2", "--exclude=.DS_Store"]
 
             if self.move:
+                # This flag removes source files that were successfully transferred.
                 rsync_cmd_base.append("--remove-source-files")
             
             if self.ignore_existing:
+                # This flag skips files that exist on the receiver, preventing --remove-source-files from deleting them.
                 rsync_cmd_base.append("--ignore-existing")
                 
             if self.compress: 
@@ -152,7 +241,6 @@ class CopyWorker(QThread):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                # For Windows, shell=True can sometimes help with finding robocopy, but usually not needed.
                 shell=False 
             )
         except FileNotFoundError:
@@ -187,7 +275,6 @@ class CopyWorker(QThread):
                 continue
 
             # Rsync progress parsing (macOS/Linux)
-            # The progress line usually contains 'B/s', '%' and ':'
             if 'B/s' in line and '%' in line and ':' in line:
                 try:
                     match = re.search(r'\s(\d+)%', line)
@@ -222,6 +309,15 @@ class CopyWorker(QThread):
                 
         if is_success:
             message = "\nCopy complete!"
+            
+            # --- Empty Folder Cleanup (Windows + Move only) ---
+            if self.move and sys.platform.startswith('win'):
+                self.log_signal.emit("\nStarting post-copy empty directory cleanup (Robocopy fix)...")
+                # Clean up empty folders left behind by Robocopy /MOV
+                self.delete_empty_folders_recursive(self.src)
+                self.log_signal.emit("Empty directory cleanup finished.")
+            # --- END CLEANUP ---
+
         elif self._cancel_requested:
             message = "\nCanceled."
         else:
@@ -265,7 +361,7 @@ class CopyGUI(QWidget):
         super().__init__()
         self.setWindowTitle("Fast Copy GUI")
         self.resize(700, 500)
-        self.theme_toggle = False
+        self.theme_toggle = True
         self.copying = False
         # Initialize new rsync flag properties
         self.move = False
@@ -336,14 +432,6 @@ class CopyGUI(QWidget):
         self.move_checkbox_main.stateChanged.connect(self.move_checkbox.setChecked)
         self.move_checkbox.stateChanged.connect(self.move_checkbox_main.setChecked)
 
-        # Invert
-        self.invert_checkbox_main = QCheckBox("Invert")
-        header_layout.addWidget(self.invert_checkbox_main)
-        # We need to mirror the state between the main view and the settings view checkbox
-        self.invert_checkbox_main.stateChanged.connect(self.invert_checkbox.setChecked)
-        self.invert_checkbox.stateChanged.connect(self.invert_checkbox_main.setChecked)
-
-
         # Separator 
         header_layout.addSpacerItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
         
@@ -359,17 +447,16 @@ class CopyGUI(QWidget):
 
         left_src_layout = QHBoxLayout()
         left_src_layout.setAlignment(Qt.AlignTop)
-        self.src_text_label = QLabel("Source")
-        self.src_text_label.setFixedWidth(75)
 
+        # Source Folder Button
         self.src_btn = QPushButton("")
         self.src_btn.setIconSize(QSize(30, 30))
         self.src_btn.setFixedSize(QSize(30, 30))
 
-        left_src_layout.addWidget(self.src_text_label)
         left_src_layout.addWidget(self.src_btn)
         src_row_layout.addLayout(left_src_layout)
 
+        # Source Path Label
         self.src_label = QLabel("None")
         self.src_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.src_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -382,6 +469,21 @@ class CopyGUI(QWidget):
         src_row_layout.addWidget(src_scroll_area)
         layout.addLayout(src_row_layout)
 
+        # === Invert Arrow Button (New Position) ===
+        invert_arrow_layout = QHBoxLayout()
+        # The QCheckBox will now act as a centered icon
+        self.invert_checkbox_icon = QPushButton("")
+        self.invert_checkbox_icon.setIconSize(QSize(30, 30))
+        self.invert_checkbox_icon.setFixedSize(QSize(30, 30))
+
+        self.invert_icon_label = QLabel("")
+
+        # invert_arrow_layout.addStretch(1)
+        invert_arrow_layout.addWidget(self.invert_checkbox_icon)
+        invert_arrow_layout.addWidget(self.invert_icon_label)
+        invert_arrow_layout.addStretch(1)
+        
+        layout.addLayout(invert_arrow_layout)
 
         # === Destination row ===
         dst_row_layout = QHBoxLayout()
@@ -389,17 +491,16 @@ class CopyGUI(QWidget):
 
         left_dst_layout = QHBoxLayout()
         left_dst_layout.setAlignment(Qt.AlignTop)
-        self.dst_text_label = QLabel("Destination")
-        self.dst_text_label.setFixedWidth(75)
-        
+
+        # Destination Folder Button
         self.dst_btn = QPushButton("")
         self.dst_btn.setIconSize(QSize(30, 30))
         self.dst_btn.setFixedSize(QSize(30, 30))
 
-        left_dst_layout.addWidget(self.dst_text_label)
         left_dst_layout.addWidget(self.dst_btn)
         dst_row_layout.addLayout(left_dst_layout)
 
+        # Destination Path Label
         self.dst_label = QLabel("None")
         self.dst_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.dst_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -562,16 +663,16 @@ class CopyGUI(QWidget):
         self.theme_checkbox.clicked.connect(self.toggle_theme)
         
         # Link main view checkboxes to state and save
-        self.move_checkbox_main.clicked.connect(self.toggle_move)
-        self.invert_checkbox_main.clicked.connect(self.toggle_invert)
+        self.move_checkbox_main.stateChanged.connect(self.toggle_move)
         
         # Link settings view checkboxes to state and save
-        self.move_checkbox.clicked.connect(self.toggle_move)
-        self.invert_checkbox.clicked.connect(self.toggle_invert)
+        self.move_checkbox.stateChanged.connect(self.toggle_move)
+        self.invert_checkbox.stateChanged.connect(self.checkbox_invert_changed)
+        self.invert_checkbox_icon.clicked.connect(self.icon_invert_clicked)
         
-        self.ignore_existing_checkbox.clicked.connect(self.toggle_ignore_existing)
-        self.compress_checkbox.clicked.connect(self.toggle_compress)
-        self.delete_checkbox.clicked.connect(self.toggle_delete)     
+        self.ignore_existing_checkbox.stateChanged.connect(self.toggle_ignore_existing)
+        self.compress_checkbox.stateChanged.connect(self.toggle_compress)
+        self.delete_checkbox.stateChanged.connect(self.toggle_delete)     
         
         self.font_size_spinbox.valueChanged.connect(self.set_log_font_size)
 
@@ -616,34 +717,107 @@ class CopyGUI(QWidget):
 
         super().keyPressEvent(event)
 
+    def update_invert_icon(self):
+        """
+        Updates the icon on the main view's invert checkbox based on state and theme.
+        This is the requested button system functionality.
+        """
+        
+        # Determine icon based on theme
+        if self.theme_toggle: # Dark Theme
+            icon_up = arrow_up_icon_dark
+            icon_down = arrow_down_icon_dark
+        else: # Light Theme
+            icon_up = arrow_up_icon_light
+            icon_down = arrow_down_icon_light
+            
+        # Determine which direction arrow to show
+        # True = Inverted (Destination -> Source, visually 'Up')
+        if self.invert_checkbox.isChecked(): 
+            icon_path = icon_up
+            tooltip = "Copy direction is Inverted (Destination folder to Source folder)"
+        else:
+            # False = Normal (Source -> Destination, visually 'Down')
+            icon_path = icon_down 
+            tooltip = "Copy direction is Normal (Source folder to Destination folder)"
+            
+        if icon_path:
+            # self.invert_checkbox_main.setIcon(QIcon(icon_path))
+            # self.invert_checkbox_main.setToolTip(tooltip)
+
+            self.invert_checkbox_icon.setIcon(QIcon(icon_path))
+            self.invert_checkbox_icon.setToolTip(tooltip)
+            
     def apply_theme(self):
         if self.theme_toggle:
-            apply_dark_palette(app)
+            # Use a temporary local app if running outside the main block for testing
+            current_app = QCoreApplication.instance() or QApplication.instance()
+            if current_app:
+                apply_dark_palette(current_app)
         else:
-            app.setPalette(QPalette())
+            current_app = QCoreApplication.instance() or QApplication.instance()
+            if current_app:
+                current_app.setPalette(QPalette())
         
-        # Update icon colors based on theme
+        # Update folder icon colors based on theme
         icon = folder_icon_dark if self.theme_toggle else folder_icon_light
         # Check if icon path is valid before setting
         if icon:
             self.src_btn.setIcon(QIcon(icon))
             self.dst_btn.setIcon(QIcon(icon))
+            
+        # Update the invert arrow icon (Essential part of the user request)
+        self.update_invert_icon()
 
     def toggle_theme(self):
         self.theme_toggle = self.theme_checkbox.isChecked()
         self.save_config()
         self.apply_theme()
 
-    # --- Copy Option Toggles (Now connected to settings widgets) ---
+    # --- Copy Option Toggles (Reverted to full user control) ---
     def toggle_move(self):
-        self.move = self.move_checkbox.isChecked()
+        # Read the state from the settings checkbox as the source of truth
+        self.move = self.move_checkbox.isChecked() 
+        
+        # Sync the main view checkbox state
+        self.move_checkbox_main.setChecked(self.move)
+        
         self.save_config()
 
-    def toggle_invert(self):
-        self.invert = self.invert_checkbox.isChecked()
+    def checkbox_invert_changed(self, state):
+        self.set_invert(bool(state))
+
+    def icon_invert_clicked(self):
+        self.set_invert(not self.invert)
+
+    def set_invert(self, value):
+        if self.invert == value:
+            return  # No change → avoid loops
+
+        self.invert = value
+
+        print( value )
+
+        if bool(value):
+            self.invert_icon_label.setText("-> %s" % self.dst_dir)
+        else:
+            self.invert_icon_label.setText("-> %s" % self.src_dir)
+
+        # Update checkbox without causing another signal
+        with QSignalBlocker(self.invert_checkbox):
+            self.invert_checkbox.setChecked(self.invert)
+
+        # Pick correct icon
+        if self.theme_toggle:  # dark mode
+            icon_path = arrow_up_icon_dark if self.invert else arrow_down_icon_dark
+        else:                  # light mode
+            icon_path = arrow_up_icon_light if self.invert else arrow_down_icon_light
+
+        self.invert_checkbox_icon.setIcon(QIcon(icon_path))
         self.save_config()
 
     def toggle_ignore_existing(self):
+        # Full user control: just update the internal state and save
         self.ignore_existing = self.ignore_existing_checkbox.isChecked()
         self.save_config()
         
@@ -654,6 +828,53 @@ class CopyGUI(QWidget):
     def toggle_delete(self): 
         self.delete = self.delete_checkbox.isChecked()
         self.save_config()
+        
+    def toggle_copy(self):
+        # Placeholder for starting/cancelling the copy thread
+        if self.copying:
+            self.worker.cancel()
+            self.start_cancel_btn.setText("Start Copy")
+            self.progress.hide()
+            self.copying = False
+            self.log.append("\nOperation halted.")
+        else:
+            # Basic validation
+            if not os.path.isdir(self.src_dir) or not os.path.isdir(self.dst_dir):
+                self.log.append("Error: Both Source and Destination directories must be set and valid.")
+                return
+
+            # Check for recursive danger before starting
+            if is_recursive_copy(self.src_dir, self.dst_dir):
+                self.log.append("DANGER: Recursive copy detected! The Source path is inside the Destination path, or vice versa. Aborting.")
+                return
+
+            self.copying = True
+            self.start_cancel_btn.setText("Cancel Copy")
+            self.progress.setValue(0)
+            self.progress.show()
+            self.log.clear()
+
+            # The worker handles the actual path swapping based on self.invert
+            self.worker = CopyWorker(
+                src=self.src_dir, 
+                dst=self.dst_dir, 
+                move=self.move,
+                invert=self.invert,
+                ignore_existing=self.ignore_existing,
+                compress=self.compress,
+                delete=self.delete
+            )
+            self.worker.progress_signal.connect(self.progress.setValue)
+            self.worker.log_signal.connect(self.log.append)
+            self.worker.finished.connect(self._copy_finished)
+            self.worker.start()
+
+    def _copy_finished(self):
+        self.copying = False
+        self.start_cancel_btn.setText("Start Copy")
+        self.progress.setValue(100)
+        # Note: Progress bar remains visible until next start/cancel, allowing user to see final state.
+
 
     # --- Directory Management ---
 
@@ -663,7 +884,14 @@ class CopyGUI(QWidget):
         
         # Update main view checkboxes from persistent state on load
         self.move_checkbox_main.setChecked(self.move)
-        self.invert_checkbox_main.setChecked(self.invert)
+        # self.invert_checkbox_main.setChecked(self.invert)
+        
+        # Also ensure the settings checkboxes are synced (important after load_config)
+        self.move_checkbox.setChecked(self.move)
+        self.invert_checkbox.setChecked(self.invert)
+        self.ignore_existing_checkbox.setChecked(self.ignore_existing)
+        self.compress_checkbox.setChecked(self.compress)
+        self.delete_checkbox.setChecked(self.delete)
 
 
     def select_src(self):
@@ -684,41 +912,60 @@ class CopyGUI(QWidget):
 
     # --- Config Persistence ---
 
+    def set_config_data( self, data={} ):
+        # Directories
+        self.src_dir = data.get("src", "")
+        self.dst_dir = data.get("dst", "")
+            
+        # Visuals
+        self.theme_toggle = data.get("theme_toggle", False)
+        self.theme_checkbox.setChecked(self.theme_toggle)
+
+        # Font Size
+        self.log_font_size = data.get("log_font_size", 16)
+        self.font_size_spinbox.setValue(self.log_font_size)
+        
+        # Move
+        self.move = data.get("move", False)
+        self.move_checkbox.setChecked(self.move)
+        
+        # Invert
+        self.invert = data.get("invert", False)
+        # self.invert_checkbox.setChecked(self.invert)
+
+        # Ignore Existing
+        self.ignore_existing = data.get("ignore_existing", True)
+        self.ignore_existing_checkbox.setChecked(self.ignore_existing)
+        
+        # Compress On Copy
+        self.compress = data.get("compress", False) 
+        self.compress_checkbox.setChecked(self.compress)
+        
+        # Delete On Copy
+        self.delete = data.get("delete", False)
+        self.delete_checkbox.setChecked(self.delete)
+
+        if bool(self.invert):
+            self.invert_icon_label.setText("-> %s" % self.dst_dir)
+        else:
+            self.invert_icon_label.setText("-> %s" % self.src_dir)
+
+        self.set_invert(self.invert_state)
+
     def load_config(self):
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, "r") as f:
                     data = json.load(f)
-                
-                # Directories
-                self.src_dir = data.get("src", "")
-                self.dst_dir = data.get("dst", "")
-                    
-                # Visuals
-                self.theme_toggle = data.get("theme_toggle", False)
-                self.theme_checkbox.setChecked(self.theme_toggle)
-                self.log_font_size = data.get("log_font_size", 12)
-                self.font_size_spinbox.setValue(self.log_font_size)
-                
-                # Copy Options
-                self.move = data.get("move", False)
-                self.move_checkbox.setChecked(self.move)
-                
-                self.invert = data.get("invert", False)
-                self.invert_checkbox.setChecked(self.invert)
-
-                self.ignore_existing = data.get("ignore_existing", True)
-                self.ignore_existing_checkbox.setChecked(self.ignore_existing)
-                
-                self.compress = data.get("compress", False) 
-                self.compress_checkbox.setChecked(self.compress)
-                
-                self.delete = data.get("delete", False)
-                self.delete_checkbox.setChecked(self.delete)
+                    self.set_config_data( data )
 
             except Exception as e:
                 # print(f"Error loading config: {e}")
                 pass
+
+        else:
+            self.set_config_data( default_config )
+            self.save_config()
 
     def save_config(self):
         data = {
@@ -807,8 +1054,25 @@ class CopyGUI(QWidget):
         else:
             event.accept()
 
+def apply_preferred_style(app, preferred_styles):
+    available = set(QStyleFactory.keys())
+    print("Available styles:", available)
+
+    for style_name in preferred_styles:
+        if style_name in available:
+            print(f"Applying style: {style_name}")
+            app.setStyle(QStyleFactory.create(style_name))
+            return style_name
+
+    print("No preferred styles found. Using default Qt style.")
+    return None
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+
+    # Try styles in order: macOS → windows → Fusion
+    apply_preferred_style(app, ["macOS", "windows", "Fusion"])
+
     gui = CopyGUI()
     gui.show()
     sys.exit(app.exec())
