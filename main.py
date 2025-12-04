@@ -746,7 +746,10 @@ class CopyGUI(QWidget):
         if not size == int(os.environ["QT_FONT_DPI"]):
             self.dpi_did_change = True
             self.log.clear()
-            self.log.append(f"Warning: DPI Font Size changed from {os.environ["QT_FONT_DPI"]} to {size}\nRestart the application for this change to take effect.")
+            self.log.append(
+                f"Warning: DPI Font Size changed from {os.environ['QT_FONT_DPI']} to {size}\n"
+                "Restart the application for this change to take effect."
+            )
             # self.prompt_restart()
         else:
             if bool(self.dpi_did_change):
