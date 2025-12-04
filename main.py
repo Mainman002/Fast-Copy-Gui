@@ -111,6 +111,31 @@ def is_recursive_copy(src, dst):
     return False
 # --- END UTILITY FUNCTION ---
 
+class DropButton(QPushButton):
+    def __init__(self, *args, on_drop_callback=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setAcceptDrops(True)
+        self.on_drop_callback = on_drop_callback
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            # Only allow folders or files
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        urls = event.mimeData().urls()
+        if not urls:
+            return
+
+        # Use first dropped item
+        path = urls[0].toLocalFile()
+
+        # Call your function (examples below)
+        if self.on_drop_callback:
+            self.on_drop_callback(path)
+
 
 class CopyWorker(QThread):
     progress_signal = Signal(int)
@@ -492,7 +517,11 @@ class CopyGUI(QWidget):
         left_src_layout.setAlignment(Qt.AlignTop)
 
         # Source Folder Button
-        self.src_btn = QPushButton("")
+        self.src_btn = DropButton(
+            "",
+            on_drop_callback=self.set_source_path
+        )
+
         self.src_btn.setIconSize(QSize(30, 30))
         self.src_btn.setFixedSize(QSize(30, 30))
         self.src_btn.setStyleSheet("""
@@ -550,7 +579,26 @@ class CopyGUI(QWidget):
         left_dst_layout.setAlignment(Qt.AlignTop)
 
         # Destination Folder Button
-        self.dst_btn = QPushButton("")
+        # self.dst_btn = QPushButton("")
+        # self.dst_btn.setIconSize(QSize(30, 30))
+        # self.dst_btn.setFixedSize(QSize(30, 30))
+        # self.dst_btn.setStyleSheet("""
+        #     QPushButton {
+        #         background-color: transparent;
+        #         border: none;
+        #     }
+        #     QPushButton:hover {
+        #         background-color: rgba(255, 255, 255, 30); /* optional soft hover */
+        #     }
+        # """)
+
+
+        # Destination Folder Button
+        self.dst_btn = DropButton(
+            "",
+            on_drop_callback=self.set_destination_path
+        )
+
         self.dst_btn.setIconSize(QSize(30, 30))
         self.dst_btn.setFixedSize(QSize(30, 30))
         self.dst_btn.setStyleSheet("""
@@ -1021,6 +1069,29 @@ class CopyGUI(QWidget):
         self.compress_checkbox.setChecked(self.compress)
         self.delete_checkbox.setChecked(self.delete)
 
+    def set_source_path(self, path):
+        print("Dropped:", path)
+        self.src_dir = path
+        self.src_label.setText(path)
+        self.save_config()
+        self.update_labels()
+    
+    def open_source_dialog(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Source Folder")
+        if folder:
+            self.set_source_path(folder)
+    
+    def set_destination_path(self, path):
+        print("Dropped:", path)
+        self.dst_dir = path
+        self.dst_label.setText(path)
+        self.save_config()
+        self.update_labels()
+    
+    def open_destination_dialog(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Destination Folder")
+        if folder:
+            self.set_destination_path(folder)
 
     def select_src(self):
         start_dir = self.src_dir if os.path.exists(self.src_dir) else str(QDir.homePath())
