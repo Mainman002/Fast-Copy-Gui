@@ -1,6 +1,6 @@
 # Fast-Copy-GUI
 
-**Fast-Copy-GUI** is a cross-platform desktop application (macOS and Linux) that provides a graphical frontend for fast, robust file synchronization and copying using the native **rsync** utility.
+**Fast-Copy-GUI** is a cross-platform desktop application (Windows, MacOS, and Linux) that provides a graphical frontend for fast, robust file synchronization and copying using the native **rsync** or **robocopy** utilities.
 It allows users to select source and destination directories, configure move/invert options, monitor progress in real-time, and manage operations efficiently with a simple and responsive interface.
 
 ---
@@ -15,7 +15,7 @@ It allows users to select source and destination directories, configure move/inv
 * Dark and light themes.
 * Persistent configuration for last used folders, theme, and settings.
 
-<img width="812" height="640" alt="Screenshot 2025-12-03 at 8 57 50 PM" src="https://github.com/user-attachments/assets/755e4af5-bd4c-41d5-af5c-cc53d60c01d1" />
+<img width="870" height="682" alt="Screenshot 2025-12-04 at 10 49 02 AM" src="https://github.com/user-attachments/assets/971fd74c-bae6-480d-9778-c0e645640921" />
 
 ---
 
