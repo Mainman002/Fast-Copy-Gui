@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QPushButton, QProgressBar, QTextEdit,
     QVBoxLayout, QHBoxLayout, QLabel, QFileDialog, QSpinBox, 
     QSpacerItem, QSizePolicy, QScrollArea, QCheckBox, QStackedWidget,
-    QStyleFactory, QGridLayout, QGroupBox
+    QStyleFactory, QGridLayout, QGroupBox, QMessageBox
 )
 
 from PySide6.QtGui import (
@@ -23,7 +23,8 @@ default_config={
     "src":"",
     "dst":"",
     "theme_toggle":True,
-    "log_font_size":16,
+    "log_font_size":13,
+    "dpi_font_size":78,
     "move":False,
     "invert":False,
     "ignore_existing":True,
@@ -54,6 +55,10 @@ try:
     # Arrow Down (Normal State: SRC -> DST)
     arrow_down_icon_light = get_asset_path("icons/arrow_down_dark.png")
     arrow_down_icon_dark = get_asset_path("icons/arrow_down_light.png")
+
+    # Settings Gear)
+    settings_icon_light = get_asset_path("icons/settings_dark.png")
+    settings_icon_dark = get_asset_path("icons/settings_light.png")
 except:
     # Fallback paths if get_asset_path fails in a non-bundled environment
     
@@ -68,6 +73,10 @@ except:
     # Arrow Down
     arrow_down_icon_light = ""
     arrow_down_icon_dark = ""
+
+    # Settings Gear)
+    settings_icon_light = ""
+    settings_icon_dark = ""
 
 
 CONFIG_FILE = os.path.expanduser("~/.fast_copy_gui_config.json")
@@ -180,9 +189,9 @@ class CopyWorker(QThread):
             if self.delete:
                 cmd_base.append("/MIR")
                 self.log_signal.emit("Warning: Using /MIR flag will delete files in the destination that do not exist in the source.")
-            elif not self.delete:
+            # elif not self.delete:
                 # If not mirroring, use /S to copy subdirectories but not empty ones, to avoid purging.
-                cmd_base.append("/S")
+                # cmd_base.append("/S")
             
             cmd = cmd_base
             copy_tool = "robocopy"
@@ -315,6 +324,14 @@ class CopyWorker(QThread):
                 self.log_signal.emit("\nStarting post-copy empty directory cleanup (Robocopy fix)...")
                 # Clean up empty folders left behind by Robocopy /MOV
                 self.delete_empty_folders_recursive(self.src)
+
+                # Re-Add deleted folder
+                try:
+                    os.makedirs(self.src, exist_ok=True)
+                    self.log_signal.emit(f"Source folder '{self.src}' guaranteed to exist.")
+                except Exception as e:
+                    self.log_signal.emit(f"Warning: Could not guarantee source folder exists: {e}")
+                    
                 self.log_signal.emit("Empty directory cleanup finished.")
             # --- END CLEANUP ---
 
@@ -369,8 +386,11 @@ class CopyGUI(QWidget):
         self.ignore_existing = True
         self.compress = False
         self.delete = False
+        self.dpi_did_change = False
 
-        self.log_font_size = 12
+        self.log_font_size = 13
+        self.dpi_font_size = 78
+
         self.setFocus(Qt.OtherFocusReason)
 
         main_layout = QVBoxLayout(self)
@@ -398,14 +418,22 @@ class CopyGUI(QWidget):
         self.apply_theme()
         # Initial application of loaded font size to all elements
         self.set_log_font_size(self.log_font_size) 
+        self.set_dpi_font_size(self.dpi_font_size)
         
     def init_setting_widgets(self):
         # Visuals Widgets
         self.theme_checkbox = QCheckBox("Dark Theme")
+
         self.font_size_label = QLabel("Global Font Size:")
         self.font_size_spinbox = QSpinBox()
         self.font_size_spinbox.setRange(8, 24)
         self.font_size_spinbox.setSuffix(" pt")
+
+        # DPI Font Size
+        self.dpi_font_size_label = QLabel("DPI Font Size:")
+        self.dpi_font_size_spinbox = QSpinBox()
+        self.dpi_font_size_spinbox.setRange(24, 96)
+        self.dpi_font_size_spinbox.setSuffix("")
 
         # Copy Options Widgets
         self.move_checkbox = QCheckBox("Move (Remove source files)")
@@ -436,7 +464,9 @@ class CopyGUI(QWidget):
         header_layout.addSpacerItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
         
         # Settings Button
-        self.show_settings_btn = QPushButton("Settings")
+        self.show_settings_btn = QPushButton("")
+        self.show_settings_btn.setIconSize(QSize(30, 30))
+        self.show_settings_btn.setFixedSize(QSize(30, 30))
         header_layout.addWidget(self.show_settings_btn)
         
         layout.addLayout(header_layout)
@@ -586,18 +616,37 @@ class CopyGUI(QWidget):
         aesthetics_layout.addWidget(self.theme_checkbox)
         grid_layout.addWidget(group_aesthetics, 0, 0, 1, 2) # Row 0, Col 0, span 1 row, span 2 columns
         
-        # Group Box for Typography
+        # 3. Group Box for HDPI (Row 2) - NEW GROUP BOX
+        group_hdpi = QGroupBox("HDPI Scaling")
+        
+        # *** FIX: Use QGridLayout here for two columns (Label + Spinbox) ***
+        hdpi_layout = QGridLayout(group_hdpi)
+        
+        # DPI Font Size (Row 0 of hdpi_layout)
+        # *** FIX: Use QGridLayout's correct row/column indices ***
+        hdpi_layout.addWidget(self.dpi_font_size_label, 0, 0) 
+        hdpi_layout.addWidget(self.dpi_font_size_spinbox, 0, 1)
+        
+        # Add the HDPI group to the main grid_layout
+        grid_layout.addWidget(group_hdpi, 1, 0, 1, 2) # Row 2, Col 0, span 1 row, span 2 columns
+
+        # Group Box for Typography (Row 1)
         group_typography = QGroupBox("Typography")
         typography_layout = QGridLayout(group_typography)
         
+        # 1. Standard Font Size (Row 0)
         typography_layout.addWidget(self.font_size_label, 0, 0)
         typography_layout.addWidget(self.font_size_spinbox, 0, 1)
+        
+        # 2. Shortcut Label (Row 1)
         typography_layout.addWidget(QLabel("Shortcut: Ctrl/Cmd + / -"), 1, 0, 1, 2)
         
-        grid_layout.addWidget(group_typography, 1, 0, 1, 2)
+        # Add the typography group to the main grid_layout
+        grid_layout.addWidget(group_typography, 2, 0, 1, 2)
         
-        # Spacer to push content to the top
-        grid_layout.addItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding), 2, 0)
+        # 4. Spacer to push content to the top (Row 3)
+        # Use the next available row (Row 3) for the spacer
+        grid_layout.addItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding), 3, 0)
         
         return scroll_area
 
@@ -671,6 +720,7 @@ class CopyGUI(QWidget):
         self.delete_checkbox.stateChanged.connect(self.toggle_delete)     
         
         self.font_size_spinbox.valueChanged.connect(self.set_log_font_size)
+        self.dpi_font_size_spinbox.valueChanged.connect(self.set_dpi_font_size)
 
     # --- Font and Theme Management ---
 
@@ -691,6 +741,50 @@ class CopyGUI(QWidget):
         self.font_size_spinbox.blockSignals(False)
         
         self.save_config()
+    
+    def set_dpi_font_size(self, size):
+        if not size == int(os.environ["QT_FONT_DPI"]):
+            self.dpi_did_change = True
+            self.log.clear()
+            self.log.append(f"Warning: DPI Font Size changed from {os.environ["QT_FONT_DPI"]} to {size}\nRestart the application for this change to take effect.")
+            # self.prompt_restart()
+        else:
+            if bool(self.dpi_did_change):
+                self.log.clear()
+
+        self.dpi_font_size = size
+        self.save_config()
+
+    def prompt_restart(self):
+        """Displays a message box and offers to restart the application."""
+        
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Information)
+        msg.setText("DPI change requires an application restart to take effect.")
+        msg.setWindowTitle("Restart Required")
+        
+        # Add buttons for the user's choices
+        restart_button = msg.addButton("Restart Now", QMessageBox.AcceptRole)
+        cancel_button = msg.addButton("Restart Later", QMessageBox.RejectRole)
+        
+        msg.exec()
+        
+        if msg.clickedButton() == restart_button:
+            self.restart_application()
+        
+    def restart_application(self):
+        """Quits the current instance and launches a new one."""
+        
+        # Get the current executable path
+        python = sys.executable
+        # Get the path of the main script (if running as script) or the executable (if frozen)
+        script = os.path.abspath(sys.argv[0]) 
+        
+        # Start a new process with the same arguments
+        os.execl(python, python, script, *sys.argv[1:])
+        
+        # If execl fails (or as a fallback), exit the application gracefully
+        QCoreApplication.quit()
 
     def keyPressEvent(self, event):
         # Check for Ctrl (Linux/Win) or Command (Mac) modifier
@@ -758,6 +852,12 @@ class CopyGUI(QWidget):
         if icon:
             self.src_btn.setIcon(QIcon(icon))
             self.dst_btn.setIcon(QIcon(icon))
+
+        # Update settings icon colors based on theme
+        icon = settings_icon_dark if self.theme_toggle else settings_icon_light
+        # Check if icon path is valid before setting
+        if icon:
+            self.show_settings_btn.setIcon(QIcon(icon))
             
         # Update the invert arrow icon (Essential part of the user request)
         self.update_invert_icon()
@@ -907,8 +1007,12 @@ class CopyGUI(QWidget):
         self.theme_checkbox.setChecked(self.theme_toggle)
 
         # Font Size
-        self.log_font_size = data.get("log_font_size", 16)
+        self.log_font_size = data.get("log_font_size", 13)
         self.font_size_spinbox.setValue(self.log_font_size)
+
+        # DPI Font Size
+        self.dpi_font_size = data.get("dpi_font_size", 78)
+        self.dpi_font_size_spinbox.setValue(self.dpi_font_size)
         
         # Move
         self.move = data.get("move", False)
@@ -956,7 +1060,8 @@ class CopyGUI(QWidget):
             "ignore_existing": self.ignore_existing_checkbox.isChecked(),
             "compress": self.compress_checkbox.isChecked(), 
             "delete": self.delete_checkbox.isChecked(),     
-            "log_font_size": self.log_font_size
+            "log_font_size": self.log_font_size,
+            "dpi_font_size": self.dpi_font_size
             }
         
         with open(CONFIG_FILE, "w") as f:
@@ -978,15 +1083,15 @@ class CopyGUI(QWidget):
             return
 
         if bool(self.src_dir == "" or self.src_dir == "None" and self.dst_dir == "" or self.dst_dir == "None"):
-            self.log.append("\nPlease select a top and bottom directory")
+            self.log.append("Please select both top and bottom directories")
             return
         
         elif bool(self.src_dir == "" or self.src_dir == "None"):
-            self.log.append("\nPlease select a top directory")
+            self.log.append("Please select a top directory")
             return
         
         elif bool(self.dst_dir == "" or self.dst_dir == "None"):
-            self.log.append("\nPlease select a bottom directory")
+            self.log.append("Please select a bottom directory")
             return
         
         # Use the settings checkbox state as the source of truth
@@ -1006,7 +1111,6 @@ class CopyGUI(QWidget):
             self.log.append("Note: Progress bar is disabled on Windows as robocopy does not provide incremental overall progress.")
         else:
             self.progress.show()
-
 
         # Pass all settings states to the worker
         self.worker = CopyWorker(
@@ -1058,7 +1162,35 @@ def apply_preferred_style(app, preferred_styles):
     print("No preferred styles found. Using default Qt style.")
     return None
 
+CONFIG_FILE = os.path.expanduser("~/.fast_copy_gui_config.json")
+
+def load_config_early():
+    """Load configuration from file and set environment variables needed at startup."""
+    config = default_config.copy()
+    
+    try:
+        with open(CONFIG_FILE, 'r') as f:
+            user_config = json.load(f)
+            # Update the default config with any saved user values
+            config.update(user_config)
+            
+    except FileNotFoundError:
+        # If no config file exists, use defaults
+        pass 
+    except Exception as e:
+        # Handle JSON parse errors, etc.
+        print(f"Warning: Could not load configuration file. Using defaults. Error: {e}")
+        
+    
+    # --- CRITICAL: Set the DPI environment variable BEFORE QApplication starts ---
+    dpi_size = config.get("dpi_font_size", default_config["dpi_font_size"])
+    os.environ["QT_FONT_DPI"] = f"{dpi_size}"
+    
+    return config
+
 if __name__ == "__main__":
+    initial_config = load_config_early()
+
     app = QApplication(sys.argv)
 
     # Try styles in order: macOS → windows → Fusion
