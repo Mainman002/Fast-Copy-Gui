@@ -471,6 +471,15 @@ class CopyGUI(QWidget):
         self.show_settings_btn = QPushButton("")
         self.show_settings_btn.setIconSize(QSize(30, 30))
         self.show_settings_btn.setFixedSize(QSize(30, 30))
+        self.show_settings_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: none;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 255, 255, 30); /* optional soft hover */
+            }
+        """)
         header_layout.addWidget(self.show_settings_btn)
         
         layout.addLayout(header_layout)
@@ -486,6 +495,15 @@ class CopyGUI(QWidget):
         self.src_btn = QPushButton("")
         self.src_btn.setIconSize(QSize(30, 30))
         self.src_btn.setFixedSize(QSize(30, 30))
+        self.src_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: none;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 255, 255, 30); /* optional soft hover */
+            }
+        """)
 
         left_src_layout.addWidget(self.src_btn)
         src_row_layout.addLayout(left_src_layout)
@@ -509,6 +527,15 @@ class CopyGUI(QWidget):
         self.invert_checkbox_icon = QPushButton("")
         self.invert_checkbox_icon.setIconSize(QSize(30, 30))
         self.invert_checkbox_icon.setFixedSize(QSize(30, 30))
+        self.invert_checkbox_icon.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: none;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 255, 255, 30); /* optional soft hover */
+            }
+        """)
 
         invert_arrow_layout.addWidget(self.invert_checkbox_icon)
         invert_arrow_layout.addStretch(1)
@@ -526,6 +553,15 @@ class CopyGUI(QWidget):
         self.dst_btn = QPushButton("")
         self.dst_btn.setIconSize(QSize(30, 30))
         self.dst_btn.setFixedSize(QSize(30, 30))
+        self.dst_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: none;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 255, 255, 30); /* optional soft hover */
+            }
+        """)
 
         left_dst_layout.addWidget(self.dst_btn)
         dst_row_layout.addLayout(left_dst_layout)
