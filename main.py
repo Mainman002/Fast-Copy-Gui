@@ -376,7 +376,7 @@ def apply_dark_palette(app):
 class CopyGUI(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Fast Copy GUI")
+        self.setWindowTitle("Fast Copy GUI - v1.0.0")
         self.resize(700, 500)
         self.theme_toggle = True
         self.copying = False
@@ -462,6 +462,10 @@ class CopyGUI(QWidget):
 
         # Separator 
         header_layout.addSpacerItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
+        
+        # Version Label
+        # self.version_label = QLabel("v1.0.0")
+        # header_layout.addWidget(self.version_label)
         
         # Settings Button
         self.show_settings_btn = QPushButton("")
