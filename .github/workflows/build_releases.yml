@@ -48,6 +48,7 @@ jobs:
           elif [ "${{ matrix.os }}" = "windows-latest" ]; then
             echo "ARCH=windows" >> $GITHUB_OUTPUT
             echo "EXT=.exe" >> $GITHUB_OUTPUT
+          fi
 
       - name: Build Executable with PyInstaller
         shell: bash
