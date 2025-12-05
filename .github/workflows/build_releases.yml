@@ -73,6 +73,7 @@ jobs:
                   --exclude-module PySide6.QtNetwork \
                   --exclude-module PySide6.QtSvg \
                   --exclude-module PySide6.QtPrintSupport \
+                  --exclude-module PySide6.QtPdf \
                   main.py
 
           elif [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
@@ -83,6 +84,7 @@ jobs:
                   --exclude-module PySide6.QtNetwork \
                   --exclude-module PySide6.QtSvg \
                   --exclude-module PySide6.QtPrintSupport \
+                  --exclude-module PySide6.QtPdf \
                   main.py
 
           elif [ "${{ matrix.os }}" = "windows-latest" ]; then
@@ -95,6 +97,7 @@ jobs:
                   --exclude-module PySide6.QtNetwork \
                   --exclude-module PySide6.QtSvg \
                   --exclude-module PySide6.QtPrintSupport \
+                  --exclude-module PySide6.QtPdf \
                   main.py
 
               # Optional: additional UPX pass for maximum compression
