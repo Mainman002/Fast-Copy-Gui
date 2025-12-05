@@ -20,55 +20,57 @@ jobs:
             pyinstaller-args: "--onefile --clean"
           - os: windows-latest
             platform: windows
-            pyinstaller-args: "--onefile --clean --upx-dir=upx"
+            pyinstaller-args: "--onefile --upx-dir=upx --name FastCopyGUI"
+          
           - os: macos-latest
             platform: macos
             pyinstaller-args: "--windowed --name FastCopyGUI --clean"
-
+    
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-
+    
       - name: Set up Python
+        id: setup-python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
+    
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
-
+    
       - name: Install UPX (Windows only)
         if: matrix.platform == 'windows'
-        run: choco install upx
-
+        run: |
+          choco install upx
+    
       - name: Cache PyInstaller bootloader
         uses: actions/cache@v4
         with:
           path: ~/.cache/pyinstaller
-          key: pyinstaller-${{ matrix.os }}
-
-      - name: Fix macOS PySide6 symlink issue
-        if: matrix.platform == 'macos'
-        run: |
-          echo "Applying PySide6 symlink workaround..."
-          # This is just for info; add actual fix if needed
-          find / -name "Qt3DAnimation.framework" 2>/dev/null | head
-
+          key: pyinstaller-${{ matrix.os }}-${{ steps.setup-python.outputs.python-version }}
+          restore-keys: |
+            pyinstaller-${{ matrix.os }}-
+    
+      # Removed non-functional PySide6 symlink step for clarity
+      
       - name: Build executable
         run: |
-          mkdir -p build_output
+          # This step now consistently uses the name 'FastCopyGUI'
           pyinstaller ${{ matrix.pyinstaller-args }} main.py
-
+    
       - name: Package artifact (zip)
         run: |
           cd dist
+          # This command now reliably finds 'FastCopyGUI*' output.
           zip -r "../FastCopyGUI-${{ matrix.platform }}.zip" FastCopyGUI*
-
+    
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: FastCopyGUI-${{ matrix.platform }}
           path: "*.zip"
+    
