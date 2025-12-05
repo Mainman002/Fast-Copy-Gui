@@ -1,17 +1,10 @@
-name: Build Desktop Executables (PyInstaller)
+name: Build Desktop Executables (Optimized)
 
 on:
   push:
-    # Trigger builds when code is pushed to the main branch, master, or the rsync branch
-    branches:
-      - main
-      - master
-      - rsync
-    # Also trigger on tag pushes (e.g., v1.0.0) which is ideal for releases
-    tags:
-      - 'v*' 
+    branches: [main, master, rsync]
+    tags: ['v*']
   workflow_dispatch:
-    # Allows manual triggering of the workflow from the GitHub Actions UI
 
 jobs:
   build_executables:
@@ -19,15 +12,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Define the operating systems to build on. ADDED WINDOWS.
         os: [macos-latest, ubuntu-latest, windows-latest]
-        python-version: ['3.11'] # Use a specific, stable Python version
+        python-version: ["3.11"]
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -35,106 +27,95 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          # PyInstaller is necessary for packaging
-          # PySide6 is necessary for the GUI (make sure this matches your project)
           pip install PyInstaller PySide6
+
+      # Download UPX on Windows only
+      - name: Download UPX (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: powershell
+        run: |
+          Invoke-WebRequest https://github.com/upx/upx/releases/download/v4.2.3/upx-4.2.3-win64.zip -OutFile upx.zip
+          Expand-Archive upx.zip -DestinationPath upx
 
       - name: Determine Output Name and Architecture
         id: vars
         shell: bash
         run: |
-          # Use short names for the output artifacts
           if [ "${{ matrix.os }}" = "macos-latest" ]; then
             echo "ARCH=macos" >> $GITHUB_OUTPUT
-            echo "EXT=" >> $GITHUB_OUTPUT # macOS executables don't typically have an extension
+            echo "EXT=" >> $GITHUB_OUTPUT
           elif [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
             echo "ARCH=linux" >> $GITHUB_OUTPUT
-            echo "EXT=" >> $GITHUB_OUTPUT # Linux executables don't typically have an extension
-          elif [ "${{ matrix.os }}" = "windows-latest" ]; then
+            echo "EXT=" >> $GITHUB_OUTPUT
+          else
             echo "ARCH=windows" >> $GITHUB_OUTPUT
-            echo "EXT=.exe" >> $GITHUB_OUTPUT # Windows executables have .exe extension
+            echo "EXT=.exe" >> $GITHUB_OUTPUT
           fi
 
-      - name: Build Executable with PyInstaller
+      - name: Build Executable (Optimized)
         shell: bash
         run: |
-          # 1. Clean the 'dist' directory completely to prevent 'output directory not empty' errors.
-          rm -rf dist
-          
-          # The common arguments are now minimal, focusing on the app itself.
-          COMMON_ARGS="--clean --windowed --name FastCopyGUI --add-data assets:assets main.py"
+          rm -rf dist build
 
-          if [ "${{ matrix.os }}" = "macos-latest" ]; then
-            # macOS: Targeted collection for core PySide6 modules to avoid framework conflicts.
-            echo "Building macOS .app bundle (using --onedir and targeted PySide6 collection)..."
-            pyinstaller ${COMMON_ARGS} \
-              --collect-all PySide6.QtCore \
-              --collect-all PySide6.QtWidgets \
-              --collect-all PySide6.QtGui \
-              --collect-all PySide6.QtNetwork
-          
+          COMMON_ARGS="--clean --windowed --strip \
+            --exclude-module PySide6.QtTranslations \
+            --collect-data PySide6 \
+            --collect-submodule PySide6.QtCore \
+            --collect-submodule PySide6.QtWidgets \
+            --collect-submodule PySide6.QtGui \
+            --collect-plugins platforms \
+            --collect-plugins imageformats \
+            --name FastCopyGUI \
+            --add-data assets:assets \
+            main.py"
+
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            echo "Building Windows (onefile + UPX)..."
+            pyinstaller $COMMON_ARGS --onefile --upx-dir upx/upx-4.2.3-win64
           elif [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-            # Linux: Use --onefile for a single binary, collect all modules normally.
-            echo "Building Linux executable (using --onefile and full PySide6 collection)..."
-            pyinstaller ${COMMON_ARGS} --onefile \
-              --collect-all PySide6
-
-          elif [ "${{ matrix.os }}" = "windows-latest" ]; then
-            # Windows: Use --onefile and collect all modules normally.
-            echo "Building Windows executable (using --onefile and full PySide6 collection)..."
-            pyinstaller ${COMMON_ARGS} --onefile \
-              --collect-all PySide6
+            echo "Building Linux (onefile)..."
+            pyinstaller $COMMON_ARGS --onefile
+          else
+            echo "Building macOS (.app bundle)..."
+            pyinstaller $COMMON_ARGS
           fi
 
-      - name: Create Linux/macOS Artifact Zip
-        # This step runs ONLY on Linux and macOS, using 'zip' and bash syntax
+      # Zip macOS + Linux artifacts
+      - name: Create Zip (Non-Windows)
         if: runner.os != 'Windows'
         shell: bash
         run: |
           ZIP_NAME="FastCopyGUI-${{ steps.vars.outputs.ARCH }}-${{ github.sha }}.zip"
           echo "ZIP_FILE=$ZIP_NAME" >> $GITHUB_ENV
-          
+
           cd dist
-          
           if [ "${{ steps.vars.outputs.ARCH }}" = "macos" ]; then
-            # macOS: Zip the .app directory
             zip -r "../$ZIP_NAME" FastCopyGUI.app
-          elif [ "${{ steps.vars.outputs.ARCH }}" = "linux" ]; then
-            # Linux: Zip the single executable
+          else
             zip "../$ZIP_NAME" FastCopyGUI
           fi
-          
-      - name: Create Windows Artifact Zip (using 7z)
-        # This step runs ONLY on Windows, using '7z' and PowerShell syntax
+
+      # Zip Windows artifact
+      - name: Create Zip (Windows)
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          # The executable is created in the 'dist' folder.
           $ZIP_NAME="FastCopyGUI-${{ steps.vars.outputs.ARCH }}-${{ github.sha }}.zip"
           echo "ZIP_FILE=$ZIP_NAME" | Out-File -FilePath $env:GITHUB_ENV -Append
-          
-          Write-Host "Zipping artifact using 7z..."
-          # The '7z a' command creates an archive: a - add, -tzip - use zip format
-          if (Test-Path "dist\FastCopyGUI.exe") {
-              7z a -tzip $ZIP_NAME dist\FastCopyGUI.exe
-          } else {
-              # Handle potential PyInstaller one-dir output if build method was changed
-              7z a -tzip $ZIP_NAME dist\FastCopyGUI\*
-          }
-        
+
+          7z a -tzip $ZIP_NAME dist\FastCopyGUI.exe
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ZIP_FILE }}
           path: ${{ env.ZIP_FILE }}
-          if-no-files-found: error
           retention-days: 7
 
-      # Optional: Create a GitHub Release attachment if this job was triggered by a tag
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/v') # Check if the trigger was a tag (e.g., v1.0.0)
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v1
         with:
           files: ${{ env.ZIP_FILE }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # This secret is automatically provided by GitHub
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
