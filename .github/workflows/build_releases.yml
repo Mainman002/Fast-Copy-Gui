@@ -2,16 +2,13 @@ name: Build Desktop Executables (PyInstaller)
 
 on:
   push:
-    # Trigger builds when code is pushed to the main branch, master, or the rsync branch
     branches:
       - main
       - master
       - rsync
-    # Also trigger on tag pushes (e.g., v1.0.0) which is ideal for releases
     tags:
       - 'v*' 
   workflow_dispatch:
-    # Allows manual triggering of the workflow from the GitHub Actions UI
 
 jobs:
   build_executables:
@@ -19,114 +16,86 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Define the operating systems to build on. ADDED WINDOWS.
         os: [macos-latest, ubuntu-latest, windows-latest]
-        python-version: ['3.11'] # Use a specific, stable Python version
+        python-version: ['3.11']
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-        
+
       - name: Set up Python ${{ matrix.python-version }}
-        id: setup-python # Added ID for caching, retaining the correct structure
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          
-      # --- Removed the custom "Determine Output Name and Architecture" step ---
-      # The required platform name (macos, linux, windows) is now available via matrix.platform
-      
-      # Retaining the caching steps from the previous reliable version
-      - name: Cache PyInstaller bootloader
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pyinstaller
-          # Key includes python version for better cache management
-          key: pyinstaller-${{ matrix.os }}-${{ steps.setup-python.outputs.python-version }}
-          restore-keys: |
-            pyinstaller-${{ matrix.os }}-
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          # PyInstaller is necessary for packaging
-          # PySide6 is necessary for the GUI (make sure this matches your project)
-          pip install PyInstaller PySide6
-          
+          # Pin PySide6 to a version compatible with Python 3.11
+          pip install "PySide6>=6.10.0,<6.11"
+          pip install PyInstaller
+
+      - name: Determine Output Name and Architecture
+        id: vars
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            echo "ARCH=macos" >> $GITHUB_OUTPUT
+            echo "EXT=" >> $GITHUB_OUTPUT
+          elif [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            echo "ARCH=linux" >> $GITHUB_OUTPUT
+            echo "EXT=" >> $GITHUB_OUTPUT
+          elif [ "${{ matrix.os }}" = "windows-latest" ]; then
+            echo "ARCH=windows" >> $GITHUB_OUTPUT
+            echo "EXT=.exe" >> $GITHUB_OUTPUT
+
       - name: Build Executable with PyInstaller
         shell: bash
         run: |
-          # 1. Clean the 'dist' directory completely to prevent 'output directory not empty' errors.
           rm -rf dist
-          
-          # COMMON_ARGS standardizes the executable name, which is CRITICAL for zipping later.
-          # Your original file used --windowed --name FastCopyGUI for the common args, which is correct.
           COMMON_ARGS="--clean --windowed --name FastCopyGUI --add-data assets:assets main.py"
-          
-          if [ "${{ matrix.platform }}" = "macos" ]; then
-            # macOS: Use --onedir (default) for a reliable .app bundle build.
-            echo "Building macOS .app bundle (using --onedir and targeted PySide6 collection)..."
+
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
             pyinstaller ${COMMON_ARGS} \
               --collect-all PySide6.QtCore \
               --collect-all PySide6.QtWidgets \
               --collect-all PySide6.QtGui \
-              --collect-all PySide6.QtNetwork
+              --collect-all PySide6.QtNetwork \
+              --strip
           
-          elif [ "${{ matrix.platform }}" = "linux" ]; then
-            # Linux: Use --onefile for a single binary, collect all modules normally.
-            echo "Building Linux executable (using --onefile and full PySide6 collection)..."
+          elif [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
             pyinstaller ${COMMON_ARGS} --onefile \
-              --collect-all PySide6
-              
-          elif [ "${{ matrix.platform }}" = "windows" ]; then
-            # Windows: Use --onefile and collect all modules normally.
-            echo "Building Windows executable (using --onefile and full PySide6 collection)..."
+              --collect-all PySide6 \
+              --strip \
+              --upx
+
+          elif [ "${{ matrix.os }}" = "windows-latest" ]; then
             pyinstaller ${COMMON_ARGS} --onefile \
-              --collect-all PySide6
-          fi
-          
-      - name: Create Linux/macOS Artifact Zip (using bash)
-        # Uses matrix.platform directly. Also added UPX installation for Linux if needed (optional, but common).
-        if: matrix.platform == 'linux' || matrix.platform == 'macos'
+              --collect-all PySide6 \
+              --upx
+
+      - name: Create Linux/macOS Artifact Zip
+        if: runner.os != 'Windows'
         shell: bash
         run: |
-          # Use matrix.platform instead of steps.vars.outputs.ARCH
-          ZIP_NAME="FastCopyGUI-${{ matrix.platform }}-${{ github.sha }}.zip"
-          echo "ZIP_FILE=$ZIP_NAME" >> $GITHUB_ENV # Set environment variable for Upload step
-          
+          ZIP_NAME="FastCopyGUI-${{ steps.vars.outputs.ARCH }}-${{ github.sha }}.zip"
+          echo "ZIP_FILE=$ZIP_NAME" >> $GITHUB_ENV
           cd dist
-          
-          if [ "${{ matrix.platform }}" = "macos" ]; then
-            # macOS: Zip the .app directory
+          if [ "${{ steps.vars.outputs.ARCH }}" = "macos" ]; then
             zip -r "../$ZIP_NAME" FastCopyGUI.app
-          elif [ "${{ matrix.platform }}" = "linux" ]; then
-            # Linux: Zip the single executable
+          elif [ "${{ steps.vars.outputs.ARCH }}" = "linux" ]; then
             zip "../$ZIP_NAME" FastCopyGUI
-          fi
-          
-      - name: Create Windows Artifact Zip (using 7z and PowerShell)
-        # This step runs ONLY on Windows. Install UPX here if you need compression.
-        if: matrix.platform == 'windows'
+
+      - name: Create Windows Artifact Zip (using 7z)
+        if: runner.os == 'Windows'
         shell: powershell
         run: |
-          # Install UPX before zipping for compression
-          Write-Host "Installing UPX via choco..."
-          choco install upx -y
-          
-          $ZIP_NAME="FastCopyGUI-${{ matrix.platform }}-${{ github.sha }}.zip"
+          $ZIP_NAME="FastCopyGUI-${{ steps.vars.outputs.ARCH }}-${{ github.sha }}.zip"
           echo "ZIP_FILE=$ZIP_NAME" | Out-File -FilePath $env:GITHUB_ENV -Append
-          
-          Write-Host "Zipping artifact using 7z..."
-          # The executable is created in the 'dist' folder.
-          # Install 7z utility (it's often pre-installed on windows-latest, but this is safer)
-          choco install 7zip -y
-          
           if (Test-Path "dist\FastCopyGUI.exe") {
-              # Windows --onefile output is FastCopyGUI.exe
-              & 'C:\Program Files\7-Zip\7z.exe' a -tzip $ZIP_NAME "dist\FastCopyGUI.exe"
+              7z a -tzip $ZIP_NAME dist\FastCopyGUI.exe
           } else {
-              # Fallback for one-dir output
-              & 'C:\Program Files\7-Zip\7z.exe' a -tzip $ZIP_NAME dist\FastCopyGUI\*
+              7z a -tzip $ZIP_NAME dist\FastCopyGUI\*
           }
         
       - name: Upload Artifact
@@ -136,13 +105,11 @@ jobs:
           path: ${{ env.ZIP_FILE }}
           if-no-files-found: error
           retention-days: 7
-          
-      # Optional: Create a GitHub Release attachment if this job was triggered by a tag
+
       - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/v') # Check if the trigger was a tag (e.g., v1.0.0)
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v1
         with:
           files: ${{ env.ZIP_FILE }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # This secret is automatically provided by GitHub
-
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
