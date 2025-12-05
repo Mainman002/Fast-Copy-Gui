@@ -104,6 +104,38 @@ jobs:
               # upx --best dist/FastCopyGUI.exe
           fi
 
+      - name: Strip unnecessary Qt frameworks from macOS app
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          APP_DIR="dist/FastCopyGUI.app/Contents/Frameworks"
+          echo "Removing unused Qt frameworks from $APP_DIR ..."
+          
+          # Qt frameworks in top-level Frameworks folder
+          rm -rf "$APP_DIR/QtNetwork" \
+                 "$APP_DIR/QtPdf" \
+                 "$APP_DIR/QtSvg" \
+                 "$APP_DIR/QtOpenGL" \
+                 "$APP_DIR/QtQmlModels" \
+                 "$APP_DIR/QtQml" \
+                 "$APP_DIR/QtQmlMeta" \
+                 "$APP_DIR/QtQuick" \
+                 "$APP_DIR/QtQmlWorkerScript"
+          
+          # Qt frameworks in PySide6 Qt lib folder
+          PY_SIDE_DIR="$APP_DIR/PySide6/Qt/lib"
+          rm -rf "$PY_SIDE_DIR/QtNetwork.framework" \
+                 "$PY_SIDE_DIR/QtPdf.framework" \
+                 "$PY_SIDE_DIR/QtSvg.framework" \
+                 "$PY_SIDE_DIR/QtOpenGL.framework" \
+                 "$PY_SIDE_DIR/QtQmlModels.framework" \
+                 "$PY_SIDE_DIR/QtQml.framework" \
+                 "$PY_SIDE_DIR/QtQmlMeta.framework" \
+                 "$PY_SIDE_DIR/QtQuick.framework" \
+                 "$PY_SIDE_DIR/QtQmlWorkerScript.framework"
+          
+          echo "Unused frameworks removed."
+
       - name: Create Linux/macOS Artifact Zip
         # This step runs ONLY on Linux and macOS, using 'zip' and bash syntax
         if: runner.os != 'Windows'
