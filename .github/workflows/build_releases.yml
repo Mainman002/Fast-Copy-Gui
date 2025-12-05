@@ -136,18 +136,19 @@ jobs:
           
             # Optional: Remove extra Qt plugins and translations
             PLUGIN_DIR="dist/FastCopyGUI.app/Contents/PlugIns"
-            rm -rf "$PLUGIN_DIR/printsupport" \
-                  "$PLUGIN_DIR/mediaservice" \
-                  "$PLUGIN_DIR/iconengines" \
-                  "$PLUGIN_DIR/styles" \
-                  "$PLUGIN_DIR/bearer" \
-                  "$PLUGIN_DIR/sqldrivers"
 
-            # Keep only Cocoa platform plugin
-            find "$PLUGIN_DIR/platforms" -mindepth 1 -maxdepth 1 ! -name "cocoa.*" -exec rm -rf {} +
+            if [ -d "$PLUGIN_DIR/platforms" ]; then
+                find "$PLUGIN_DIR/platforms" -mindepth 1 -maxdepth 1 ! -name "cocoa.*" -exec rm -rf {} +
+            fi
 
-            # Remove translations
-            rm -rf "dist/FastCopyGUI.app/Contents/Resources/translations"
+            # Remove other optional plugin folders if they exist
+            for folder in printsupport mediaservice iconengines styles bearer sqldrivers; do
+                [ -d "$PLUGIN_DIR/$folder" ] && rm -rf "$PLUGIN_DIR/$folder"
+            done
+
+            # Remove translations if present
+            TRANSLATIONS_DIR="dist/FastCopyGUI.app/Contents/Resources/translations"
+            [ -d "$TRANSLATIONS_DIR" ] && rm -rf "$TRANSLATIONS_DIR"
 
           echo "Unused frameworks removed."
 
