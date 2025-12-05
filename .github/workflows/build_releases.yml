@@ -134,6 +134,21 @@ jobs:
                  "$PY_SIDE_DIR/QtQuick.framework" \
                  "$PY_SIDE_DIR/QtQmlWorkerScript.framework"
           
+            # Optional: Remove extra Qt plugins and translations
+            PLUGIN_DIR="dist/FastCopyGUI.app/Contents/PlugIns"
+            rm -rf "$PLUGIN_DIR/printsupport" \
+                  "$PLUGIN_DIR/mediaservice" \
+                  "$PLUGIN_DIR/iconengines" \
+                  "$PLUGIN_DIR/styles" \
+                  "$PLUGIN_DIR/bearer" \
+                  "$PLUGIN_DIR/sqldrivers"
+
+            # Keep only Cocoa platform plugin
+            find "$PLUGIN_DIR/platforms" -mindepth 1 -maxdepth 1 ! -name "cocoa.*" -exec rm -rf {} +
+
+            # Remove translations
+            rm -rf "dist/FastCopyGUI.app/Contents/Resources/translations"
+
           echo "Unused frameworks removed."
 
       - name: Create Linux/macOS Artifact Zip
