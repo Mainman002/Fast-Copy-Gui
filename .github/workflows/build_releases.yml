@@ -29,7 +29,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install PyInstaller PySide6
 
-      # Download UPX on Windows only
+      # Download UPX for Windows
       - name: Download UPX (Windows)
         if: matrix.os == 'windows-latest'
         shell: powershell
@@ -60,27 +60,25 @@ jobs:
           COMMON_ARGS="--clean --windowed --strip \
             --exclude-module PySide6.QtTranslations \
             --collect-data PySide6 \
-            --collect-submodule PySide6.QtCore \
-            --collect-submodule PySide6.QtWidgets \
-            --collect-submodule PySide6.QtGui \
-            --collect-plugins platforms \
-            --collect-plugins imageformats \
+            --collect-submodules PySide6.QtCore \
+            --collect-submodules PySide6.QtWidgets \
+            --collect-submodules PySide6.QtGui \
+            --collect-binaries PySide6.QtGui \
             --name FastCopyGUI \
             --add-data assets:assets \
             main.py"
 
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            echo "Building Windows (onefile + UPX)..."
+            echo 'Building Windows (onefile + UPX)...'
             pyinstaller $COMMON_ARGS --onefile --upx-dir upx/upx-4.2.3-win64
           elif [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-            echo "Building Linux (onefile)..."
+            echo 'Building Linux (onefile)...'
             pyinstaller $COMMON_ARGS --onefile
           else
-            echo "Building macOS (.app bundle)..."
+            echo 'Building macOS (.app bundle)...'
             pyinstaller $COMMON_ARGS
           fi
 
-      # Zip macOS + Linux artifacts
       - name: Create Zip (Non-Windows)
         if: runner.os != 'Windows'
         shell: bash
@@ -95,7 +93,6 @@ jobs:
             zip "../$ZIP_NAME" FastCopyGUI
           fi
 
-      # Zip Windows artifact
       - name: Create Zip (Windows)
         if: runner.os == 'Windows'
         shell: powershell
