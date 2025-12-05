@@ -63,11 +63,9 @@ jobs:
           
           # The common arguments are now minimal, focusing on the app itself.
           # COMMON_ARGS="--clean --windowed --name FastCopyGUI --add-data assets:assets main.py"
-          COMMON_ARGS="--clean --windowed --name FastCopyGUI --add-data assets:assets --strip --upx"
+          COMMON_ARGS="--clean --windowed --name FastCopyGUI --add-data assets:assets --strip"
 
           if [ "${{ matrix.os }}" = "macos-latest" ]; then
-              # macOS: Targeted collection for core PySide6 modules to avoid framework conflicts.
-              echo "Building macOS .app bundle (using --onedir and targeted PySide6 collection)..."
               pyinstaller ${COMMON_ARGS} --onedir \
                   --collect-all PySide6.QtCore \
                   --collect-all PySide6.QtWidgets \
@@ -78,8 +76,6 @@ jobs:
                   main.py
 
           elif [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-              # Linux: Use --onefile for a single binary
-              echo "Building Linux executable (using --onefile and minimal PySide6)..."
               pyinstaller ${COMMON_ARGS} --onefile \
                   --collect-all PySide6.QtCore \
                   --collect-all PySide6.QtWidgets \
@@ -92,7 +88,7 @@ jobs:
           elif [ "${{ matrix.os }}" = "windows-latest" ]; then
               # Windows: Use --onefile and minimal PySide6
               echo "Building Windows executable (using --onefile and minimal PySide6)..."
-              pyinstaller ${COMMON_ARGS} --onefile --upx-dir=upx \
+              pyinstaller ${COMMON_ARGS} --onefile \
                   --collect-all PySide6.QtCore \
                   --collect-all PySide6.QtWidgets \
                   --collect-all PySide6.QtGui \
@@ -102,7 +98,7 @@ jobs:
                   main.py
 
               # Optional: additional UPX pass for maximum compression
-              upx --best dist/FastCopyGUI.exe
+              # upx --best dist/FastCopyGUI.exe
           fi
 
       - name: Create Linux/macOS Artifact Zip
