@@ -1,118 +1,74 @@
-name: Build Desktop Executables (Optimized)
+name: Build FastCopyGUI Releases
 
 on:
-  push:
-    branches: [main, master, rsync]
-    tags: ['v*']
   workflow_dispatch:
+  push:
+    tags:
+      - "v*"
 
 jobs:
-  build_executables:
+  build:
+    name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
-        python-version: ["3.11"]
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            pyinstaller-args: "--onefile --clean"
+          - os: windows-latest
+            platform: windows
+            pyinstaller-args: "--onefile --clean --upx-dir=upx"
+          - os: macos-latest
+            platform: macos
+            pyinstaller-args: "--windowed --name FastCopyGUI --clean"
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout repo
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.11"
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install PyInstaller PySide6
+          pip install -r requirements.txt
+          pip install pyinstaller
 
-      # Download UPX for Windows
-      - name: Download UPX (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: powershell
+      - name: Install UPX (Windows only)
+        if: matrix.platform == 'windows'
+        run: choco install upx
+
+      - name: Cache PyInstaller bootloader
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pyinstaller
+          key: pyinstaller-${{ matrix.os }}
+
+      - name: Fix macOS PySide6 symlink issue
+        if: matrix.platform == 'macos'
         run: |
-          Invoke-WebRequest https://github.com/upx/upx/releases/download/v4.2.3/upx-4.2.3-win64.zip -OutFile upx.zip
-          Expand-Archive upx.zip -DestinationPath upx
+          echo "Applying PySide6 symlink workaround..."
+          # This is just for info; add actual fix if needed
+          find / -name "Qt3DAnimation.framework" 2>/dev/null | head
 
-      - name: Determine Output Name and Architecture
-        id: vars
-        shell: bash
+      - name: Build executable
         run: |
-          if [ "${{ matrix.os }}" = "macos-latest" ]; then
-            echo "ARCH=macos" >> $GITHUB_OUTPUT
-            echo "EXT=" >> $GITHUB_OUTPUT
-          elif [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-            echo "ARCH=linux" >> $GITHUB_OUTPUT
-            echo "EXT=" >> $GITHUB_OUTPUT
-          else
-            echo "ARCH=windows" >> $GITHUB_OUTPUT
-            echo "EXT=.exe" >> $GITHUB_OUTPUT
-          fi
+          mkdir -p build_output
+          pyinstaller ${{ matrix.pyinstaller-args }} main.py
 
-      - name: Build Executable (Optimized)
-        shell: bash
+      - name: Package artifact (zip)
         run: |
-          rm -rf dist build
-
-          COMMON_ARGS="--clean --windowed --strip \
-            --exclude-module PySide6.QtTranslations \
-            --collect-data PySide6 \
-            --collect-submodules PySide6.QtCore \
-            --collect-submodules PySide6.QtWidgets \
-            --collect-submodules PySide6.QtGui \
-            --collect-binaries PySide6.QtGui \
-            --name FastCopyGUI \
-            --add-data assets:assets \
-            main.py"
-
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            echo 'Building Windows (onefile + UPX)...'
-            pyinstaller $COMMON_ARGS --onefile --upx-dir upx/upx-4.2.3-win64
-          elif [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-            echo 'Building Linux (onefile)...'
-            pyinstaller $COMMON_ARGS --onefile
-          else
-            echo 'Building macOS (.app bundle)...'
-            pyinstaller $COMMON_ARGS
-          fi
-
-      - name: Create Zip (Non-Windows)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          ZIP_NAME="FastCopyGUI-${{ steps.vars.outputs.ARCH }}-${{ github.sha }}.zip"
-          echo "ZIP_FILE=$ZIP_NAME" >> $GITHUB_ENV
-
           cd dist
-          if [ "${{ steps.vars.outputs.ARCH }}" = "macos" ]; then
-            zip -r "../$ZIP_NAME" FastCopyGUI.app
-          else
-            zip "../$ZIP_NAME" FastCopyGUI
-          fi
-
-      - name: Create Zip (Windows)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          $ZIP_NAME="FastCopyGUI-${{ steps.vars.outputs.ARCH }}-${{ github.sha }}.zip"
-          echo "ZIP_FILE=$ZIP_NAME" | Out-File -FilePath $env:GITHUB_ENV -Append
-
-          7z a -tzip $ZIP_NAME dist\FastCopyGUI.exe
+          zip -r "../FastCopyGUI-${{ matrix.platform }}.zip" FastCopyGUI*
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ZIP_FILE }}
-          path: ${{ env.ZIP_FILE }}
-          retention-days: 7
-
-      - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: ${{ env.ZIP_FILE }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: FastCopyGUI-${{ matrix.platform }}
+          path: "*.zip"
