@@ -60,7 +60,7 @@ try:
     settings_icon_light = get_asset_path("icons/settings_dark.png")
     settings_icon_dark = get_asset_path("icons/settings_light.png")
 except:
-    # Fallback paths if get_asset_path fails in a non-bundled environment
+    # Fallback paths if get_asset_path fails in a non-bundled environment.
     
     # Folder Icon (Using system-like icons as fallback if custom assets fail)
     folder_icon_light = "" 
